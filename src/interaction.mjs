@@ -164,9 +164,7 @@ export async function readScreen(ctx) {
     if (same) break;
   }
   const compared = seen.elements.length > 0;
-  // Accessibility could not describe the screen, so this is the screen's own text: only
-  // used to tell whether it changed, which the fast recognizer answers well enough.
-  const elements = compared ? seen.elements : (await ctx.recognize({ source: 'ocr', fast: true, max_elements: Number.MAX_SAFE_INTEGER })).elements;
+  const elements = compared ? seen.elements : (await ctx.recognize({ source: 'ocr', max_elements: Number.MAX_SAFE_INTEGER })).elements;
   const text = [...new Set(elements.filter(visible).map(describeElement).filter(Boolean))];
   const warning = promptWarning(elements);
   return {

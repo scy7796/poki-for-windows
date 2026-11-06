@@ -281,17 +281,24 @@ export class Devices {
     if (!this.frame || this.frame.device !== target.id) return this.capture();
     return this.frame;
   }
-  async ocr(frame, accurate = false) {
+  async ocr(frame) {
     checkWork();
-    // The accurate pass says everything the fast one does, so it answers a later fast
-    // question as well; the reverse is not true, and a fast result is never reused for a
-    // caller that has to read a control's label.
-    if (frame.ocrAccurate) return frame.ocrAccurate;
-    if (!accurate && frame.ocr) return frame.ocr;
-    const key = accurate ? 'ocrAccurate' : 'ocr';
-    return frame[key] ??= phase('ocr', () => this.readOCR(frame, accurate));
+    // One result per frame: the prompt check, the element listing and any fallback all read
+    // the same pixels, and recognizing them twice was pure cost.
+    return frame.ocr ??= phase('ocr', () => this.readOCR(frame));
   }
-  async readOCR(frame, accurate = false) {
+  async readOCR(frame) {
+    // macOS keeps the v0.1.1 contract exactly: build/ocr takes one path, prints one JSON
+    // array, and knows nothing about --server, about engines, or about reading the original
+    // capture. Its output is already in points.
+    if (process.platform === 'darwin') {
+      const file = join(stateDir, 'frames', `${randomUUID()}-ocr.png`);
+      try {
+        await writeFile(file, frame.data, { mode: 0o600 });
+        const { stdout } = await this.run(ocr.file, [file]);
+        return JSON.parse(stdout).map(e => ({ ...e, label: e.text, type: 'StaticText', frame: { x: e.x, y: e.y, width: e.width, height: e.height } }));
+      } finally { await unlink(file).catch(() => {}); }
+    }
     const file = join(stateDir, 'frames', `${randomUUID()}-ocr.png`);
     // Recognition is sharper on the capture the device produced than on the frame reduced
     // to points: at a third of the size a Chinese character loses the strokes that tell it
@@ -301,9 +308,9 @@ export class Devices {
     const scale = original && Number.isFinite(frame.scale) && frame.scale > 0 ? frame.scale : 1;
     try {
       await writeFile(file, original ?? frame.data, { mode: 0o600 });
-      // The resident helper answers in order, one line per image. A helper that has to be
-      // discarded is replaced by a fresh one, and the one-shot path remains for a host where
-      // the helper cannot stay resident at all.
+      // The resident helper answers one line per image. A helper that has to be discarded is
+      // replaced by a fresh one, and the one-shot path remains for a host where the helper
+      // cannot stay resident at all.
       const session = ocrSession();
       let resident = await session.ask(file);
       if (resident === undefined) {
@@ -312,8 +319,7 @@ export class Devices {
         resident = JSON.parse(stdout);
       }
       if (resident?.error) throw new Error(`Text recognition failed: ${resident.error}`);
-      const run = resident;
-      return (await run).map(e => ({ ...e, label: e.text, type: 'StaticText', frame: { x: e.x / scale, y: e.y / scale, width: e.width / scale, height: e.height / scale } }));
+      return resident.map(e => ({ ...e, label: e.text, type: 'StaticText', frame: { x: e.x / scale, y: e.y / scale, width: e.width / scale, height: e.height / scale } }));
     } finally { await unlink(file).catch(() => {}); }
   }
   async recognize(args = {}, existingFrame) {
@@ -328,9 +334,9 @@ export class Devices {
       } catch (error) { if (stopped(error)) throw error; nativeError = error.message; if (args.source === 'accessibility' || args.source === 'ax') throw error; }
     }
     if (!elements) {
-      // A caller that intends to act on what it finds needs the accurate engine; the fast
-      // one is only right for asking whether anything on the screen moved.
-      elements = await this.ocr(frame, args.accurate !== false);
+      // A caller that intends to act on what it finds needs the accurate engine, and the
+      // helper already puts it on the GPU when there is one.
+      elements = await this.ocr(frame);
       source = 'ocr';
     }
     if (!args.include_offscreen) elements = elements.filter(onScreen(frame));
