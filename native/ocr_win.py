@@ -161,22 +161,40 @@ def recognize(path):
 
 
 def serve():
-    """One image path per line on stdin, one JSON array per line on stdout."""
+    """One image path per line on stdin, one reply per line on a private channel.
+
+    Replies leave on a duplicate of the original stdout, and descriptor 1 is then pointed
+    at stderr, so nothing a library prints can land in the middle of the protocol. Without
+    that, one stray line shifts every later reply onto the wrong frame, and the caller taps
+    coordinates read from a screen that is no longer there.
+    """
+    protocol = os.fdopen(os.dup(1), 'w', encoding='utf-8', newline='\n')
+    os.dup2(2, 1)
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding='utf-8', errors='replace')
         except (AttributeError, ValueError):
             pass
+    # Paths arrive from the caller as UTF-8; a pipe on Windows would otherwise decode them
+    # with the ANSI code page and miss every file under a non-ASCII user name.
+    try:
+        sys.stdin.reconfigure(encoding='utf-8')
+    except (AttributeError, ValueError):
+        pass
     for line in sys.stdin:
         path = line.strip()
         if not path:
             continue
         try:
             elements, _engine = recognize(path)
-            sys.stdout.write(json.dumps(elements, sort_keys=True, ensure_ascii=False) + '\n')
+            reply = {'path': path, 'elements': elements}
         except Exception as error:  # noqa: BLE001 - answer the request, keep serving
-            sys.stdout.write(json.dumps({'error': str(error)}, sort_keys=True) + '\n')
-        sys.stdout.flush()
+            reply = {'path': path, 'error': str(error)}
+        try:
+            protocol.write(json.dumps(reply, sort_keys=True, ensure_ascii=False) + '\n')
+            protocol.flush()
+        except OSError:
+            break  # the reader is gone; leave quietly instead of raising out of the loop
     return 0
 
 

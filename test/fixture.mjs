@@ -36,7 +36,24 @@ else if(tool==='idevice') {
  if(args.includes('screenshot')) {if(state.screenshotUnavailable){console.error('Screenshot service unavailable');process.exit(1);}copyFileSync(process.env.FIXTURE_IMAGE,args.at(-1));console.log('Screenshot saved to: fixture');}
  else if(args.includes('screencapture')) {if(state.failRecording)process.exit(1);if(!state.recordingBlock)process.stdout.write('frame');process.stdin.resume();setInterval(()=>{},10000);}
  else console.log(JSON.stringify(args.at(-1)==='ScreenScaleFactor'?1:args.at(-1)==='DeviceName'?'Fixture Phone':'fixture'));
-} else if(tool==='ocr') {if(state.ocrUnavailable){console.error('Text recognition unavailable');process.exit(1);}if(state.ocrXs?.length>1)writeFileSync(process.env.FIXTURE_STATE,JSON.stringify({...state,ocrXs:state.ocrXs.slice(1)}));console.log(JSON.stringify([{text:state.appearsAfterReads?'Loading':state.ocrLabel??state.label??'First',x:state.ocrXs?.[0]??10,y:10,width:40,height:20}]));}
+} else if(tool==='ocr') {
+ // The real helper answers one line per request, echoing the path it was asked about, and
+ // stays alive between requests. A fake that printed once and exited made the daemon fall
+ // back to one process per frame, which is how a resident-child leak passed every test.
+ if(args.includes('--server')){
+  for await(const line of createInterface({input:process.stdin})){
+   const path=line.trim(); if(!path) continue;
+   const now=JSON.parse(readFileSync(process.env.FIXTURE_STATE));
+   if(now.ocrUnavailable){console.log(JSON.stringify({path,error:'Text recognition unavailable'}));continue;}
+   if(now.ocrXs?.length>1)writeFileSync(process.env.FIXTURE_STATE,JSON.stringify({...now,ocrXs:now.ocrXs.slice(1)}));
+   console.log(JSON.stringify({path,elements:[{text:now.appearsAfterReads?'Loading':now.ocrLabel??now.label??'First',x:now.ocrXs?.[0]??10,y:10,width:40,height:20}]}));
+  }
+  process.exit(0);
+ }
+ if(state.ocrUnavailable){console.error('Text recognition unavailable');process.exit(1);}
+ if(state.ocrXs?.length>1)writeFileSync(process.env.FIXTURE_STATE,JSON.stringify({...state,ocrXs:state.ocrXs.slice(1)}));
+ console.log(JSON.stringify([{text:state.appearsAfterReads?'Loading':state.ocrLabel??state.label??'First',x:state.ocrXs?.[0]??10,y:10,width:40,height:20}]));
+}
 else if(tool==='simulator') {
  const connectionKeyboard=state.keyboard;
  const applyInput=req=>{

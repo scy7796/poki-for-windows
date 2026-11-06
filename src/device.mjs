@@ -44,46 +44,59 @@ function ocrSession() {
   // every call miss the map, start a fresh child, and leak the previous one.
   const key = 'engine';
   if (ocrSessions.has(key)) return ocrSessions.get(key);
-  const session = { child: undefined, waiting: [], killed: false };
+  const session = { child: undefined, waiting: [] };
   session.ensure = () => {
     if (session.child) return session.child;
     const env = { ...process.env, POKI_OCR_ENGINE: process.env.POKI_OCR_ENGINE ?? 'auto' };
     const child = spawn(ocr.file, [...ocr.prefix, '--server'], owned({ stdio: ['pipe', 'pipe', 'ignore'], env }));
-    createInterface({ input: child.stdout }).on('line', line => session.waiting.shift()?.(line));
+    // A reply belongs to the request whose path it echoes. Anything else — a line a library
+    // printed, or a reply from a child that has already been replaced — is dropped instead of
+    // being handed to whoever happens to be next in the queue.
+    const lines = createInterface({ input: child.stdout });
+    lines.on('line', line => {
+      if (session.child !== child) return;
+      const head = session.waiting[0];
+      if (!head) return;
+      let reply;
+      try { reply = JSON.parse(line); } catch { return; }
+      if (!reply || typeof reply !== 'object' || reply.path !== head.file) return;
+      session.waiting.shift();
+      head.settle(reply.error === undefined ? (reply.elements ?? []) : { error: reply.error });
+    });
     child.stdin.on('error', () => {});
     const retire = () => {
+      lines.close();
       if (session.child !== child) return;
       session.child = undefined;
-      for (const resolve of session.waiting.splice(0)) resolve(undefined);
+      for (const entry of session.waiting.splice(0)) entry.settle(undefined);
     };
     child.once('exit', retire); child.once('error', retire);
     child.stdout.unref?.();
     session.child = child;
     return child;
   };
-  // A helper that does not answer is discarded rather than left in the queue: its replies
-  // are matched by position, so one unanswered request would shift every later answer onto
-  // the wrong caller. Killing it clears the queue and the next call starts a fresh one.
+  // A helper that does not answer is discarded rather than left in the queue: replies are
+  // matched by the path they echo, but a request that never comes back would still block
+  // every later one. Killing it clears the queue and the next call starts a fresh child.
   session.ask = (file, timeoutMs = 20000) => new Promise(resolve => {
     const child = session.ensure();
-    const holder = line => {
-      clearTimeout(timer);
-      if (line === undefined) { resolve(undefined); return; }
-      try { resolve(JSON.parse(line)); } catch { resolve(undefined); }
-    };
-    session.waiting.push(holder);
+    const entry = { file, settle: undefined };
     const timer = setTimeout(() => {
-      const index = session.waiting.indexOf(holder);
-      if (index >= 0) session.waiting.splice(index, 1);
+      const index = session.waiting.indexOf(entry);
+      // Already answered: the timer lost the race, so leave the healthy child alone.
+      if (index < 0) return;
+      session.waiting.splice(index, 1);
       if (session.child === child) { killTree(child, 'SIGKILL'); session.child = undefined; }
-      for (const other of session.waiting.splice(0)) other(undefined);
+      for (const other of session.waiting.splice(0)) other.settle(undefined);
       resolve(undefined);
     }, timeoutMs);
+    entry.settle = value => { clearTimeout(timer); resolve(value); };
+    session.waiting.push(entry);
     child.stdin.write(`${file}\n`);
   });
   session.close = () => {
     if (session.child) { killTree(session.child, 'SIGKILL'); session.child = undefined; }
-    for (const resolve of session.waiting.splice(0)) resolve(undefined);
+    for (const entry of session.waiting.splice(0)) entry.settle(undefined);
     ocrSessions.delete(key);
   };
   ocrSessions.set(key, session);
