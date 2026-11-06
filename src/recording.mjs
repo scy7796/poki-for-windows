@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { idevice } from './config.mjs';
 import { checkWork, execute, signal, work } from './work.mjs';
-import { killTree, mediaDirectory, owned } from './os.mjs';
+import { isWin, killTree, mediaDirectory, owned } from './os.mjs';
 
 const sessions = new WeakMap();
 const MAX_AUTOMATIC_RETRIES = 3;
@@ -127,9 +127,17 @@ export async function stopRecording(ctx, target) {
       await finish(session.receiver, 'SIGTERM');
       if (session.receiver) {
         session.encoder.child.stdin.end();
-        const timer = setTimeout(() => killTree(session.encoder.child, 'SIGINT'), 1000);
-        const kill = setTimeout(() => killTree(session.encoder.child, 'SIGKILL'), 2000);
-        try { await session.encoder.done; } finally { clearTimeout(timer); clearTimeout(kill); }
+        // Windows cannot deliver a polite signal: the first kill ends the process, and
+        // ffmpeg still has to rewrite the file for +faststart. Give it time to finish on its
+        // own and end it only when it is clearly stuck, or the movie loses its index.
+        if (isWin) {
+          const timer = setTimeout(() => killTree(session.encoder.child, 'SIGKILL'), 30000);
+          try { await session.encoder.done; } finally { clearTimeout(timer); }
+        } else {
+          const timer = setTimeout(() => killTree(session.encoder.child, 'SIGINT'), 1000);
+          const kill = setTimeout(() => killTree(session.encoder.child, 'SIGKILL'), 2000);
+          try { await session.encoder.done; } finally { clearTimeout(timer); clearTimeout(kill); }
+        }
       } else await finish(session.encoder);
       if (session.encoder.code !== 0) throw new Error(`Recording could not be finalized: ${session.encoder.stderr || session.encoder.error?.message}`);
       await chmod(session.path, 0o600);
