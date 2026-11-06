@@ -16,7 +16,7 @@ export const simulatorBin = process.env.POKI_SIMULATOR ?? join(root, 'build', ex
 
 // The macOS build compiles native/ocr.swift into build/ocr. Elsewhere the recognizer is a
 // Python helper, run through an interpreter that is spawned directly rather than a shell wrapper.
-export const ocr = process.env.POKI_OCR ?? (isWin || process.platform !== 'darwin'
+export const ocr = (isWin || process.platform !== 'darwin'
   ? { file: process.env.POKI_PYTHON ?? (isWin ? 'python' : 'python3'), prefix: [join(root, 'native/ocr_win.py')] }
   : { file: join(root, 'build/ocr'), prefix: [] });
 
