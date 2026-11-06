@@ -64,13 +64,14 @@ foreach ($file in 'idevice/Cargo.toml', 'tools/Cargo.toml') {
 
 if (-not $SkipDeviceTools) {
   Step 'Building idevice-tools'
-  & cargo build --release --no-default-features --features $crypto -p idevice-tools --bin idevice-tools --bin idevice_id
+  # Point cargo at the dependency's manifest: the repository root has no Cargo.toml. --locked
+  # matches bin/setup, so a fresh clone builds exactly the pinned tree.
+  & cargo build --locked --release --no-default-features --features $crypto --manifest-path .deps/idevice/Cargo.toml -p idevice-tools --bin idevice-tools --bin idevice_id
   if ($LASTEXITCODE -ne 0) { throw 'Building idevice-tools failed.' }
+  # Cargo writes the binaries under the workspace it was pointed at, so nothing is copied.
   $release = '.deps/idevice/target/release'
-  New-Item -ItemType Directory -Force -Path $release | Out-Null
   foreach ($name in 'idevice-tools.exe', 'idevice_id.exe') {
-    $built = "build/idevice-target/release/$name"
-    if (Test-Path $built) { Copy-Item $built $release -Force }
+    if (-not (Test-Path (Join-Path $release $name))) { throw "$name was not built in $release." }
   }
   Write-Host "idevice-tools.exe and idevice_id.exe are in $release"
 }

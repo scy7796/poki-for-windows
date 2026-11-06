@@ -33,8 +33,8 @@ run('cargo', ['build', '--release', '--manifest-path', 'native/bridge/Cargo.toml
 const built = join('build/native-target', 'release', exe('poki-native'));
 copyFileSync(built, join('build', exe('poki-native')));
 if (isWin) {
-  // The OCR helper needs an interpreter and both engines, not a compile step.
-  const engines = spawnSync('python', ['-c', 'import winsdk, rapidocr'], { stdio: 'ignore' });
-  if (engines.status !== 0) console.error('Warning: native/ocr_win.py has no OCR engine yet. Run: pip install winsdk rapidocr');
+  // The OCR helper needs an interpreter and its engines, not a compile step.
+  const engines = spawnSync('python', ['-c', 'import rapidocr, onnxruntime'], { stdio: 'ignore' });
+  if (engines.status !== 0) console.error('Warning: native/ocr_win.py has no OCR engine yet. Run: pip install winsdk rapidocr onnxruntime-directml');
 }
 console.log(`Built build/${exe('poki-native')}${isMac ? ', build/ocr and build/simulator' : ''}.`);
