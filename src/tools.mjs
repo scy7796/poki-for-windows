@@ -7,7 +7,10 @@ import { isWin } from './os.mjs';
 // Xcode owns the simulator and the iOS build system. Where it does not exist the
 // catalog does not list the tools it would back, so a listing is a promise the host
 // can keep.
-const requiresXcode = new Set(['start_simulator', 'shut_down_simulator', 'build_and_run', 'download_app_container']);
+// These need Xcode: the simulator tools, build_and_run, download_app_container, and open_url,
+// whose only route in is devicectl's process service. A listing is a promise the host can
+// keep, so on Windows they are absent rather than present and guaranteed to fail.
+const requiresXcode = new Set(['start_simulator', 'shut_down_simulator', 'build_and_run', 'download_app_container', 'open_url']);
 
 const catalog = JSON.parse(readFileSync(new URL('./data/tools.json', import.meta.url), 'utf8'));
 const defaultTools = new Set([

@@ -74,4 +74,12 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except OSError as error:
+        # The usual cause is that the Apple mobile device service is not running, which on
+        # Windows means the Apple Devices app or iTunes is closed. An empty inventory is a
+        # legitimate answer; the reason goes to stderr so a caller that only reads the list
+        # still gets a usable, empty one instead of a Python traceback.
+        print(f'Cannot reach the Apple mobile device service at {address()}: {error}. Start the Apple Devices app and connect the iPhone over USB.', file=sys.stderr)
+        print('[]')

@@ -5,15 +5,22 @@ import { createInterface } from 'node:readline';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { root, stateDir } from './config.mjs';
+import { isWin } from './os.mjs';
 import { checkWork, signal } from './work.mjs';
 
 const starting = new Map();
+
+// A remote helper is reached through a Unix domain socket with mode 0600. Windows has
+// neither, so the whole transport is unavailable there; saying so is better than the
+// TypeError that process.getuid() raises three lines later.
+const remoteUnsupported = () => new Error('RemotePairing needs a Unix domain socket, which this host does not provide. Connect the iPhone over USB instead.');
 
 export async function remoteDevices() {
   let configs;
   try { configs = JSON.parse(await readFile(join(stateDir, 'remote-devices.json'), 'utf8')); }
   catch (error) { if (error.code === 'ENOENT') return []; throw error; }
   if (!Array.isArray(configs)) throw new Error('remote-devices.json must contain an array.');
+  if (isWin && configs.length) throw remoteUnsupported();
   return configs.map(config => {
     if (typeof config.id !== 'string' || typeof config.config_path !== 'string' || !config.config_path.startsWith('/')) throw new Error('Invalid remote device configuration.');
     return { id: config.id, name: config.name ?? config.id, kind: 'physical', connection: 'RemotePairing', remote: config.config_path };
@@ -29,6 +36,7 @@ function connect(path) {
 }
 
 async function socketFor(target) {
+  if (isWin) throw remoteUnsupported();
   // macOS Unix socket names are limited to 104 bytes, regardless of the state directory's length.
   const directory = `/tmp/poki-remote-${process.getuid()}`;
   await mkdir(directory, { mode: 0o700, recursive: true });

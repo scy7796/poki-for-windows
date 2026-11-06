@@ -19,11 +19,17 @@ const normalize = v => {
   return hasCjk.test(n) ? n.replace(/\s+/gu, '') : n;
 };
 const visible = e => e.visible !== false && e.visible !== 0;
-const alertText = v => v.normalize('NFD').replace(/\p{M}/gu, '').toLocaleLowerCase().trim().replace(/’/g, "'");
+// Alert and prompt text is compared against the Chinese entries in data/interaction.json, and
+// a recognizer writes spaces between those characters, so it needs the same normalisation as
+// every other comparison. Without it "允 许" never matched "允许", and a purchase prompt could
+// go unrecognised.
+const alertText = v => normalize(v.normalize('NFD').replace(/\p{M}/gu, '').replace(/’/g, "'"));
 
 export function promptWarning(elements) {
-  const texts = elements.flatMap(strings).map(t => t.toLocaleLowerCase().trim());
-  const rule = behavior.prompt_detector.find(rule => texts.some(t => rule.exact.includes(t) || rule.contains.some(part => t.includes(part))));
+  const texts = elements.flatMap(strings).map(t => normalize(t));
+  // The patterns in data/interaction.json are written the way a person writes them, so they go
+  // through the same normalisation as the text they are compared with.
+  const rule = behavior.prompt_detector.find(rule => texts.some(t => rule.exact.some(e => normalize(e) === t) || rule.contains.some(part => t.includes(normalize(part)))));
   return rule ? { kind: rule.name } : null;
 }
 

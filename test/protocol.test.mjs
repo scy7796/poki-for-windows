@@ -13,9 +13,9 @@ import { exe } from '../src/os.mjs';
 import { hidPoint } from '../src/device.mjs';
 import { fixture, value } from './fixture.mjs';
 
-// start_simulator, shut_down_simulator, build_and_run and download_app_container need Xcode,
-// so the catalog a Windows host lists is those four short of the macOS one.
-const catalogSize = isWin ? 54 : 58;
+// start_simulator, shut_down_simulator, build_and_run, download_app_container and open_url
+// need Xcode, so the catalog a Windows host lists is those five short of the macOS one.
+const catalogSize = isWin ? 53 : 58;
 
 test('fill asks for a daemon restart after native or JavaScript updates and recovers after restart', async t => {
   for (const updated of ['native', 'JavaScript']) await t.test(updated, async t => {
@@ -86,7 +86,7 @@ test('stdio reaches the authenticated local MCP service and rejects an absent de
           'scroll', 'swipe', 'press_key', 'go_back', 'wait_for', 'handle_alert', 'batch_commands',
           'long_press', 'double_tap', 'drag', 'hide_keyboard', 'press_button',
           'scroll_to', 'terminate_app', 'pinch', 'list_apps', 'get_clipboard',
-        ].sort());
+        ].filter(name => !(isWin && name === 'open_url')).sort());
         const status = await transportClient.callTool({ name: 'poki_mcp_status', arguments: {} });
         assert.ok(!status.isError);
         const statusValue = JSON.parse(status.content[0].text);
@@ -159,7 +159,8 @@ test('an all-profile HTTP service still lets each stdio client choose its own li
   assert.equal(full.tools.length, catalogSize);
   assert.deepEqual(await f.a.listTools(), full);
   const defaultClient = await f.connect('');
-  assert.equal((await defaultClient.listTools()).tools.length, 29);
+  // open_url needs Xcode's process service, so a Windows host does not list it.
+  assert.equal((await defaultClient.listTools()).tools.length, isWin ? 28 : 29);
   assert.deepEqual(await httpClient.listTools(), full);
   assert.equal(value(await defaultClient.callTool({ name: 'wait', arguments: { seconds: 0 } })).waited, 0);
 });

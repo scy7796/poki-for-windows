@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { execute, pause, checkWork, signal, deadline, stopped, stoppingReason, phase } from './work.mjs';
 import { access, chmod, copyFile, cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { constants } from 'node:fs';
+import { constants, existsSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -337,13 +337,22 @@ async function applicationMutation(target, request, verify) {
 
 // An .ipa is a zip with Payload/<name>.app inside. macOS ships ditto; Windows
 // ships tar, which reads and writes the same zip.
+// Windows ships bsdtar in System32. A PATH entry can put Git's GNU tar first, which writes a
+// plain tar archive under a .zip name; the device then rejects the package as invalid long
+// after the fact. The system one understands both formats.
+function tarCommand() {
+  if (!isWin) return 'tar';
+  const system = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe');
+  return existsSync(system) ? system : 'tar';
+}
+
 async function unpack(archive, directory) {
-  if (isWin) await platformRun('tar', ['-xf', archive, '-C', directory]);
+  if (isWin) await platformRun(tarCommand(), ['-xf', archive, '-C', directory]);
   else await platformRun('ditto', ['-x', '-k', archive, directory]);
 }
 // --keepParent holds for ditto only, so tar is given the parent as its working below.
 async function pack(directory, archive) {
-  if (isWin) await platformRun('tar', ['-a', '-c', '-f', archive, '-C', dirname(directory), basename(directory)]);
+  if (isWin) await platformRun(tarCommand(), ['-a', '-c', '-f', archive, '-C', dirname(directory), basename(directory)]);
   else await platformRun('ditto', ['-c', '-k', '--keepParent', directory, archive]);
 }
 
@@ -554,7 +563,7 @@ async function startLocation(ctx, target, args) {
     closed.then(() => { clearTimeout(escalation); requestSignal?.removeEventListener('abort', abort); });
     let output = '';
     await new Promise((resolveReady, reject) => {
-      const timer = setTimeout(() => { child.kill('SIGTERM'); reject(new Error('Location service did not confirm the simulated location.')); }, 45000);
+      const timer = setTimeout(() => { killTree(child, 'SIGTERM'); reject(new Error('Location service did not confirm the simulated location.')); }, 45000);
       const receive = chunk => { output = (output + chunk).slice(-3000); if (output.includes('Location set!')) { clearTimeout(timer); resolveReady(); } };
       child.stdout.on('data', receive); child.stderr.on('data', receive);
       child.once('error', error => { clearTimeout(timer); reject(error); });
