@@ -19,13 +19,14 @@ const macScript = `on run argv
     end run`;
 
 // The message travels base64-encoded so no quoting rule of either shell can change it.
+// The verdict is printed rather than carried in the exit code: execute() reports stdout and
+// stderr, and an exit code it does not carry cannot be read back by the caller.
 const windowsScript = `
 $text = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:POKI_PROMPT))
 $shell = New-Object -ComObject WScript.Shell
 $answer = $shell.Popup($text, [int]$env:POKI_PROMPT_SECONDS, 'Poki MCP', 4 + 32 + 4096)
-if ($answer -eq 6) { exit 0 }
-if ($answer -eq -1) { exit 3 }
-exit 2
+if ($answer -eq 6) { Write-Output 'done' } elseif ($answer -eq -1) { Write-Output 'timeout' } else { Write-Output 'cancelled' }
+exit 0
 `;
 
 export async function askHuman(message, seconds = 120) {
@@ -35,8 +36,10 @@ export async function askHuman(message, seconds = 120) {
     const result = await execute(file, prefix, {
       timeout: (seconds + 10) * 1000,
       env: { ...process.env, POKI_PROMPT: Buffer.from(message, 'utf8').toString('base64'), POKI_PROMPT_SECONDS: String(Math.ceil(seconds)) },
-    }).then(result => result, error => ({ stdout: '', stderr: error.message, code: error.code }));
-    status = result.code === 0 ? 'done' : result.code === 3 ? 'timeout' : 'cancelled';
+    }).then(result => result, error => ({ stdout: '', stderr: error.message }));
+    // Same reading as the macOS branch. A dialog that could not be shown at all answers
+    // nothing, which is not a confirmation.
+    status = String(result.stdout ?? '').trim() || 'cancelled';
   } else {
     const { stdout } = await execute('osascript', ['-e', macScript, '--', message, String(Math.ceil(seconds))], { timeout: (seconds + 10) * 1000 });
     status = stdout.trim();
