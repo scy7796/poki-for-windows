@@ -12,9 +12,11 @@ import { root, idevice } from '../src/config.mjs';
 import { isWin, python } from '../src/os.mjs';
 
 const execute = promisify(execFile);
+const arguments_ = process.argv.slice(2);
+const flags = new Set(arguments_.filter(argument => argument.startsWith('--')));
 const { stdout } = await execute(python, [join(root, 'native/devices.py')], { timeout: 8000 });
 const ids = [...new Set(JSON.parse(stdout).map(d => d.id).filter(Boolean))];
-const selected = process.argv[2] ?? (ids.length === 1 ? ids[0] : undefined);
+const selected = arguments_.find(argument => !argument.startsWith('--')) ?? (ids.length === 1 ? ids[0] : undefined);
 if (!selected || !ids.includes(selected)) throw new Error('Connect one unlocked, trusted iPhone, or pass a connected device id.');
 const call = async (args, options = {}) => execute(idevice, ['--udid', selected, ...args], { timeout: 180000, maxBuffer: 8 * 1024 * 1024, ...options });
 const services = async () => (await call(['remotexpc'])).stdout;
@@ -27,9 +29,13 @@ async function identity() {
 async function developerMode(device) {
   const status = (await call(['amfi', 'status'])).stdout.trim();
   if (/true/i.test(status)) return 'enabled';
-  // The toggle has to be visible before a person can turn it on, and enabling it over
-  // this API is refused while the phone has a passcode. Both paths are offered.
+  // Making the toggle visible is harmless and lets a person find it.
   await call(['amfi', 'show']).catch(() => {});
+  // Turning it on remotely is a change to the device, so it only happens when asked for.
+  // It is refused anyway while the phone has a passcode.
+  if (!flags.has('--enable-developer-mode')) {
+    return `needs a person: open Settings > Privacy & Security > Developer Mode on ${device.name}, turn it on, and restart the phone. Pass --enable-developer-mode to attempt it from here.`;
+  }
   const attempt = await call(['amfi', 'enable']).then(() => '', error => String(error.stderr ?? error.message));
   if (/passcode/i.test(attempt)) {
     return `needs a person: open Settings > Privacy & Security > Developer Mode on ${device.name}, turn it on, and restart the phone. (Enabling it remotely is refused while a passcode is set.)`;
@@ -38,12 +44,19 @@ async function developerMode(device) {
   return 'enabled remotely; restart the phone if the setting asks for it';
 }
 
+// Xcode ships the image, so a Mac uses it before anything else. POKI_DDI_DIR points at an
+// unpacked DDI Restore directory for hosts that have none.
+const XCODE_DDI = '/Library/Developer/DeveloperDiskImages/iOS_DDI/Restore';
+
 async function removableDirectory() {
-  const configured = process.env.POKI_DDI_DIR;
-  if (!configured) return undefined;
-  const candidate = join(configured, 'BuildManifest.plist');
-  const present = await access(candidate).then(() => true, () => false);
-  return present ? configured : undefined;
+  const candidates = [];
+  if (process.platform === 'darwin') candidates.push(XCODE_DDI);
+  if (process.env.POKI_DDI_DIR) candidates.push(process.env.POKI_DDI_DIR);
+  for (const candidate of candidates) {
+    const present = await access(join(candidate, 'BuildManifest.plist')).then(() => true, () => false);
+    if (present) return candidate;
+  }
+  return undefined;
 }
 
 async function diskImage() {
