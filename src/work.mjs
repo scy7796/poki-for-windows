@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFile } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
-import { killTree, owned } from './os.mjs';
+import { isWin, killTree, owned } from './os.mjs';
 
 export const work = new AsyncLocalStorage();
 export function checkWork() { const context = work.getStore(); context?.signal.throwIfAborted(); if (context?.deadline !== undefined && performance.now() >= context.deadline) throw new DOMException('Observation deadline exceeded', 'TimeoutError'); }
@@ -52,7 +52,9 @@ export function execute(file, args, { timeout = 45000, input, env, maxBuffer = 3
     requestSignal?.addEventListener('abort', abort, { once: true });
     child.once('close', () => {
       clearTimeout(timer); clearTimeout(escalation); requestSignal?.removeEventListener('abort', abort);
-      if (requestSignal.aborted) killTree(child, 'SIGKILL');
+      // Windows reuses process identifiers, and the tree was already ended with /T /F when
+      // the abort fired; asking again by a stale identifier could end an unrelated tree.
+      if (requestSignal.aborted && !isWin) killTree(child, 'SIGKILL');
       if (outcome?.error) reject(outcome.error);
       else if (requestSignal?.aborted) reject(requestSignal.reason);
       else resolve(outcome ?? { stdout: '', stderr: '' });
