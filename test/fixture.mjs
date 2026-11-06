@@ -41,9 +41,13 @@ else if(tool==='idevice') {
  // stays alive between requests. A fake that printed once and exited made the daemon fall
  // back to one process per frame, which is how a resident-child leak passed every test.
  if(args.includes('--server')){
+  // One event per process, so a test can tell a resident child from one per frame.
+  log({op:'ocr_start',pid:process.pid});
   for await(const line of createInterface({input:process.stdin})){
    const path=line.trim(); if(!path) continue;
    const now=JSON.parse(readFileSync(process.env.FIXTURE_STATE));
+   if(now.ocrJunkOnce){writeFileSync(process.env.FIXTURE_STATE,JSON.stringify({...now,ocrJunkOnce:false}));console.log('this line is not a reply');}
+   if(now.ocrHangOnce){writeFileSync(process.env.FIXTURE_STATE,JSON.stringify({...now,ocrHangOnce:false}));continue;}
    if(now.ocrUnavailable){console.log(JSON.stringify({path,error:'Text recognition unavailable'}));continue;}
    if(now.ocrXs?.length>1)writeFileSync(process.env.FIXTURE_STATE,JSON.stringify({...now,ocrXs:now.ocrXs.slice(1)}));
    console.log(JSON.stringify({path,elements:[{text:now.appearsAfterReads?'Loading':now.ocrLabel??now.label??'First',x:now.ocrXs?.[0]??10,y:10,width:40,height:20}]}));
@@ -125,7 +129,7 @@ export async function processGone(pid, timeoutMs = 4000) {
   }
   return ended();
 }
-export async function fixture(t, { approvalMode = 'ask', staleNative = false, toolsProfile = '', beforeStart } = {}) {
+export async function fixture(t, { approvalMode = 'ask', staleNative = false, toolsProfile = '', beforeStart, env: extraEnv = {} } = {}) {
  const dir=await mkdtemp(join(tmpdir(),'poki-coordination-'));
  await cp(join(root,'src'),join(dir,'src'),{recursive:true});
  await cp(join(root,'package.json'),join(dir,'package.json'));
@@ -144,7 +148,7 @@ export async function fixture(t, { approvalMode = 'ask', staleNative = false, to
  for(const tool of commands)await install('bin',tool);
  for(const tool of ['poki-native','ocr','simulator'])await install('build',tool);
  if(staleNative){await mkdir(join(dir,'native/bridge/src'),{recursive:true});await writeFile(join(dir,'native/bridge/src/main.rs'),'fn main() {}');await utimes(join(dir,'build',exe('poki-native')),1,1);}
- const env={...process.env,POKI_NO_UPDATE_CHECK:'1',POKI_MCP_TOOLS:toolsProfile,POKI_MCP_APPROVAL_MODE:approvalMode,HOME:dir,USERPROFILE:isWin?dir:process.env.USERPROFILE,PATH:join(dir,'bin')+delimiter+process.env.PATH,POKI_MCP_STATE_DIR:join(dir,'state'),IDEVICE_TOOLS:join(dir,'bin',isWin?'idevice-tools.exe':'idevice'),FIXTURE_STATE:state,FIXTURE_LOG:log,FIXTURE_IMAGE:image};
+ const env={...process.env,...extraEnv,POKI_NO_UPDATE_CHECK:'1',POKI_MCP_TOOLS:toolsProfile,POKI_MCP_APPROVAL_MODE:approvalMode,HOME:dir,USERPROFILE:isWin?dir:process.env.USERPROFILE,PATH:join(dir,'bin')+delimiter+process.env.PATH,POKI_MCP_STATE_DIR:join(dir,'state'),IDEVICE_TOOLS:join(dir,'bin',isWin?'idevice-tools.exe':'idevice'),FIXTURE_STATE:state,FIXTURE_LOG:log,FIXTURE_IMAGE:image};
  let stderr='';
  const daemons=[];
  const startDaemon=async(port=0)=>{const child=spawn(process.execPath,[join(dir,'src/daemon.mjs'),'--port',String(port)],{env,stdio:['ignore','pipe',staleNative?'pipe':'inherit']});child.stderr?.on('data',chunk=>{stderr+=chunk;});const exited=once(child,'exit'),lines=createInterface({input:child.stdout});await once(lines,'line');const running={stop:async(signal='SIGTERM')=>{child.kill(signal);await exited;lines.close();}};daemons.push(running);return running;};

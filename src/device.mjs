@@ -78,7 +78,7 @@ function ocrSession() {
   // A helper that does not answer is discarded rather than left in the queue: replies are
   // matched by the path they echo, but a request that never comes back would still block
   // every later one. Killing it clears the queue and the next call starts a fresh child.
-  session.ask = (file, timeoutMs = 20000) => new Promise(resolve => {
+  session.ask = (file, timeoutMs = Number(process.env.POKI_OCR_TIMEOUT_MS ?? '') || 20000) => new Promise(resolve => {
     const child = session.ensure();
     const entry = { file, settle: undefined };
     const timer = setTimeout(() => {
