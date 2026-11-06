@@ -5,7 +5,7 @@ import { once } from 'node:events';
 import { NodeStreamableHTTPServerTransport, localhostHostValidation, localhostOriginValidation } from '@modelcontextprotocol/node';
 import { createServer, definitions } from './tools.mjs';
 import { Coordination } from './coordination.mjs';
-import { Devices } from './device.mjs';
+import { Devices, stopOcr } from './device.mjs';
 import { stateDir, endpointFile } from './config.mjs';
 import { startUpdateChecks } from './update-check.mjs';
 import { warnIfNativeStale } from './build-info.mjs';
@@ -87,6 +87,9 @@ async function stop() {
   const closed = new Promise(resolve => listener.close(resolve));
   listener.closeAllConnections();
   await Promise.allSettled([...sessions.values()].map(devices => devices.close()));
+  // The recognizer is shared by every session, so it belongs to the daemon rather than to
+  // whichever session closed last. Closing a session used to end it for everybody else.
+  stopOcr();
   await Promise.allSettled([...active].map(server => server.close()));
   await closed;
   const entry = await readFile(endpointFile, 'utf8').then(JSON.parse).catch(() => null);

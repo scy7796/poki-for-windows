@@ -134,7 +134,7 @@ export class Devices {
     if (!onlyDevices || onlyDevices.has(this.frame?.device)) { this.frame = undefined; this.elements = []; }
     return result;
   }
-  close() { stopOcr(); return this.coordinator.end(this, 'session_closed'); }
+  close() { return this.coordinator.end(this, 'session_closed'); }
   async call(name, args = {}, requestSignal, requestId) {
     if (managementTools.has(name)) {
       const parsed = definitions.find(d => d[0] === name)[2].parse(args);
