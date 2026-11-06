@@ -43,7 +43,7 @@ def windows_engine(path):
             _engines['engine'] = OcrEngine.try_create_from_user_profile_languages()
         engine = _engines['engine']
         if engine is None:
-            raise RuntimeError('Windows has no OCR engine for the user profile languages; add the language pack or use POKI_OCR_ENGINE=rapidocr')
+            raise EngineUnavailable('Windows has no OCR engine for the user profile languages; add the language pack or use POKI_OCR_ENGINE=rapidocr')
         file = await StorageFile.get_file_from_path_async(path)
         stream = await file.open_async(FileAccessMode.READ)
         decoder = await BitmapDecoder.create_async(stream)
@@ -140,7 +140,12 @@ def rapidocr(path):
 ENGINES = {'windows': windows_engine, 'rapidocr': rapidocr}
 
 
-# An engine that failed to load once is not worth paying for on every frame.
+class EngineUnavailable(Exception):
+    """This host cannot run the engine at all, as opposed to the engine failing on one image."""
+
+
+# An engine that cannot be loaded is not worth paying for on every frame. Only a missing
+# package or a missing runtime language counts; a bad path or a transient failure does not.
 _disabled = set()
 
 
@@ -153,10 +158,11 @@ def recognize(path):
             continue
         try:
             return ENGINES[name](path), name
-        except Exception as error:  # noqa: BLE001 - try the next engine, report all failures
+        except (ImportError, EngineUnavailable) as error:
             errors.append(f'{name}: {error}')
-            if 'import' in str(error).lower() or 'no module' in str(error).lower() or 'cannot' in str(error).lower():
-                _disabled.add(name)
+            _disabled.add(name)
+        except Exception as error:  # noqa: BLE001 - one bad image must not retire the engine
+            errors.append(f'{name}: {error}')
     raise RuntimeError('; '.join(errors) or f'unknown POKI_OCR_ENGINE {choice!r}')
 
 
