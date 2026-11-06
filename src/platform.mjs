@@ -658,14 +658,16 @@ async function getCrash(ctx, target, args) {
 }
 
 // The app service reports processes as a Rust debug tree with no machine format. Blocks are
-// split at each pid and the rest of a block is searched for the identity of that process.
+// split at each pid, and a process is identified by the executable path it carries: the field
+// is `executable_url` with a `relative` member. There is no name or bundle identifier field,
+// so matching on those never hit anything.
 function processesFromListing(output) {
   const processes = [];
   for (const block of output.split(/(?=pid:\s*\d+)/)) {
     const pid = Number(block.match(/pid:\s*(\d+)/)?.[1]);
     if (!Number.isInteger(pid) || pid <= 0) continue;
-    const name = block.match(/(?:name|bundle_identifier|executable|path):\s*"([^"]+)"/)?.[1];
-    processes.push({ pid, name, text: block.slice(0, 4000) });
+    const relative = block.match(/relative:\s*"([^"]*)"/)?.[1];
+    processes.push({ pid, relative, text: block.slice(0, 4000) });
   }
   return processes;
 }
@@ -680,13 +682,19 @@ async function terminatePhysical(ctx, target, app) {
     return { terminated: app.bundle_id };
   }
   // devicectl is Xcode's. The same app service is reachable over CoreDevice, so the process
-  // list and the signal come from idevice instead, and an unmatched listing is never reported
-  // as a completed termination.
+  // list comes from idevice instead. A process is only identified by where its executable
+  // lives: a short display name such as "Phone" would match unrelated apps, and a wrong
+  // signal ends the wrong process. When the listing carries no path, nothing is sent.
   const listing = await platformRun(idevice, ['--udid', target.id, 'app_service', 'processes'], { timeout: 120000 });
-  const names = [app.executable, app.bundle_id, app.name, app.path ? basename(app.path).replace(/\.app\/?$/, '') : null].filter(Boolean);
-  const matches = processesFromListing(listing.stdout + '\n' + listing.stderr)
-    .filter(process => names.some(name => process.text.includes(name)));
-  if (!matches.length) return { bundle_id: app.bundle_id, already_stopped: true, verified_by: 'app_service process list showed no matching process' };
+  const rawPath = typeof app.path === 'string' ? (app.path.startsWith('file:') ? fileURLToPath(app.path) : app.path) : undefined;
+  const appPath = rawPath ? rawPath.replace(/[\\/]+$/, '') : undefined;
+  if (!appPath) throw new Error('Cannot identify a process safely: the app listing has no executable path. No signal was sent.');
+  const processes = processesFromListing(listing.stdout + '\n' + listing.stderr);
+  if (!processes.some(process => typeof process.relative === 'string')) {
+    throw new Error('Cannot identify a process safely: the process listing has no executable path. No signal was sent.');
+  }
+  const matches = processes.filter(process => process.relative === appPath || process.relative.startsWith(`${appPath}/`) || process.relative.startsWith(`${appPath}\\`));
+  if (!matches.length) return { bundle_id: app.bundle_id, outcome: 'unknown', verified_by: 'the process listing named no executable under the app path' };
   for (const process of matches) await platformRun(idevice, ['--udid', target.id, 'app_service', 'signal', String(process.pid), '9'], { timeout: 60000 });
   return { terminated: app.bundle_id, pids: matches.map(process => process.pid) };
 }
@@ -794,10 +802,13 @@ export async function platformTool(ctx, name, args = {}) {
     }
     case 'terminate_app': {
       const app = await resolveApp(target, args);
-      if (target.kind === 'simulator') await simctl(['terminate', target.id, app.bundle_id]);
-      else return await terminatePhysical(ctx, target, app);
-      ctx.frame = undefined; ctx.elements = [];
-      return { terminated: app.bundle_id };
+      const result = target.kind === 'simulator'
+        ? (await simctl(['terminate', target.id, app.bundle_id]), { terminated: app.bundle_id })
+        : await terminatePhysical(ctx, target, app);
+      // The early return for a physical device used to skip this, leaving the cached frame
+      // and elements describing an app that is no longer on screen.
+      if (result.terminated) { ctx.frame = undefined; ctx.elements = []; }
+      return result;
     }
     case 'open_url': return openURL(ctx, target, args.url);
     case 'open_settings': return openSettings(ctx, target, args);
