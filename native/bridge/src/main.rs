@@ -243,7 +243,11 @@ impl Request {
 #[tokio::main]
 async fn main() {
     let result = async {
-        let args: Vec<String> = std::env::args().collect();
+        // args_os, because Windows permits an argument that is not valid Unicode and args()
+        // panics on it; the caller would only see "Command did not complete".
+        let args: Vec<String> = std::env::args_os()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
         if args.len() == 4 && args[1] == "--remote-server" {
             return remote::serve_socket(&args[2], &args[3]).await;
         }
@@ -253,10 +257,17 @@ async fn main() {
         if args.len() != 3 || args[1] != "--udid" {
             return Err("usage: poki-native --udid ID < request.json".into());
         }
+        // A text payload may be 1 MiB, and one character can be six bytes once escaped, so the
+        // cap has to leave room for that; at 2 MiB a legal request was cut mid-string and the
+        // caller was told the JSON was malformed rather than too large.
+        const REQUEST_LIMIT: u64 = 8 * 1024 * 1024;
         let mut input = String::new();
         std::io::stdin()
-            .take(2 * 1024 * 1024)
+            .take(REQUEST_LIMIT + 1)
             .read_to_string(&mut input)?;
+        if input.len() as u64 > REQUEST_LIMIT {
+            return Err(format!("Request exceeds the {REQUEST_LIMIT} byte limit.").into());
+        }
         let request: Request = serde_json::from_str(&input)?;
         request.validate()?;
         let limit = if matches!(request, Request::InstallApp { .. }) {

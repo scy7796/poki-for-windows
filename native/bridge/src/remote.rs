@@ -158,6 +158,14 @@ pub async fn serve(path: &str) -> Result<Value> {
     let mut session = load(path)?;
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     while let Some(line) = lines.next_line().await? {
+        // The socket form bounds a request at 2 MiB; this form had no bound at all, so a
+        // client could grow the buffer without limit. Answer a too-large request the same way
+        // the socket form refuses one instead of dropping the connection.
+        if line.len() > 2 * 1024 * 1024 {
+            println!("{}", json!({"isError":true,"error":"Remote request exceeds size limit","screen_change_verified":false}));
+            std::io::stdout().flush()?;
+            continue;
+        }
         println!("{}", reply(&mut session, &line).await);
         std::io::stdout().flush()?;
     }
