@@ -42,7 +42,16 @@ export function matching(elements, value, exact = false) {
   // A phone lists the application itself first, covering the whole screen and named after the app.
   elements = elements.filter(e => visible(e) && (e.type ?? e.role) !== 'Application');
   const full = elements.filter(e => strings(e).some(s => normalize(s) === needle));
-  return full.length || exact ? full : elements.filter(e => strings(e).some(s => normalize(s).includes(needle)));
+  return innermost(full.length || exact ? full : elements.filter(e => strings(e).some(s => normalize(s).includes(needle))));
+}
+
+// Apps often wrap a control in a container that carries the same label, so one button is listed twice.
+// A match that covers the centre of a smaller match (or an identical one listed earlier) is the same
+// spot on screen; keep the innermost. Matches at different places stay ambiguous.
+const area = element => { const box = element.frame ?? element; return box.width * box.height; };
+function innermost(found) {
+  return found.filter((element, index) => !found.some((other, at) => at !== index && covers(element, center(other))
+    && (area(other) < area(element) || area(other) === area(element) && at < index)));
 }
 
 const center = element => { const box = element.frame ?? element; return { x: box.x + box.width / 2, y: box.y + box.height / 2 }; };

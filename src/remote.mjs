@@ -73,7 +73,8 @@ function stdioRequest(target, request) {
       if (line === undefined) { finish(entry.failed ?? new Error('The remote helper closed without answering.')); return; }
       let value;
       try { value = JSON.parse(line); } catch { finish(new Error('Invalid remote helper response. Inspect before retrying input.')); return; }
-      if (value?.isError) { finish(new Error(value.error ?? 'The remote helper reported an error.')); return; }
+      // Structured refusals carry reason + instruction but no error field; keep them so the caller learns why.
+      if (value?.isError) { finish(new Error(value.error ?? ([value.reason, value.instruction].filter(Boolean).join(': ') || 'The remote helper reported an error.'))); return; }
       finish(undefined, value);
     });
     entry.child.stdin.write(JSON.stringify(request) + '\n', error => {
