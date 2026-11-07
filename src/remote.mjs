@@ -3,27 +3,82 @@ import { mkdir, readFile, lstat, unlink } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { createInterface } from 'node:readline';
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
-import { root, stateDir } from './config.mjs';
+import { join, isAbsolute } from 'node:path';
+import { root, stateDir, nativeBin } from './config.mjs';
 import { isWin } from './os.mjs';
 import { checkWork, signal } from './work.mjs';
 
 const starting = new Map();
-
-// A remote helper is reached through a Unix domain socket with mode 0600. Windows has
-// neither, so the whole transport is unavailable there; saying so is better than the
-// TypeError that process.getuid() raises three lines later.
-const remoteUnsupported = () => new Error('RemotePairing needs a Unix domain socket, which this host does not provide. Connect the iPhone over USB instead.');
 
 export async function remoteDevices() {
   let configs;
   try { configs = JSON.parse(await readFile(join(stateDir, 'remote-devices.json'), 'utf8')); }
   catch (error) { if (error.code === 'ENOENT') return []; throw error; }
   if (!Array.isArray(configs)) throw new Error('remote-devices.json must contain an array.');
-  if (isWin && configs.length) throw remoteUnsupported();
   return configs.map(config => {
-    if (typeof config.id !== 'string' || typeof config.config_path !== 'string' || !config.config_path.startsWith('/')) throw new Error('Invalid remote device configuration.');
+    if (typeof config.id !== 'string' || typeof config.config_path !== 'string' || !isAbsolute(config.config_path)) throw new Error('Invalid remote device configuration.');
     return { id: config.id, name: config.name ?? config.id, kind: 'physical', connection: 'RemotePairing', remote: config.config_path };
+  });
+}
+
+// On a host with no Unix domain socket the helper speaks over its own stdio instead: one
+// request line in, one reply line out, and it stays alive so the RemotePairing tunnel is
+// built once rather than per call. One helper per pairing file.
+const helpers = new Map();
+function stdioHelper(target) {
+  if (helpers.has(target.remote)) return helpers.get(target.remote);
+  const child = spawn(nativeBin, ['--remote', target.remote], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
+  const entry = { child, failed: undefined, waiting: [] };
+  const lines = createInterface({ input: child.stdout });
+  lines.on('line', line => entry.waiting.shift()?.(line));
+  const retire = error => {
+    entry.failed = error ?? new Error('The remote helper stopped. Input may have been delivered; inspect before retrying.');
+    for (const resolve of entry.waiting.splice(0)) resolve(undefined);
+    lines.close();
+    helpers.delete(target.remote);
+  };
+  child.once('exit', () => retire());
+  child.once('error', () => retire(new Error('Cannot start the remote helper. Run bin/setup.')));
+  child.stdin.on('error', () => {});
+  child.unref();
+  helpers.set(target.remote, entry);
+  return entry;
+}
+
+function stdioRequest(target, request) {
+  const entry = stdioHelper(target);
+  if (entry.failed) return Promise.reject(entry.failed);
+  return new Promise((resolve, reject) => {
+    const callerSignal = signal();
+    let settled = false;
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      callerSignal?.removeEventListener('abort', onAbort);
+      error ? reject(error) : resolve(value);
+    };
+    // A helper cannot be interrupted mid-request, so an abandoned request ends it and the
+    // next one starts a new tunnel; the caller is told the input may have landed.
+    const onAbort = () => {
+      entry.child.kill();
+      finish(callerSignal.reason ?? new Error('Remote request cancelled.'));
+    };
+    const timer = setTimeout(() => {
+      entry.child.kill();
+      finish(new DOMException('Remote operation timed out; inspect before retrying input.', 'TimeoutError'));
+    }, 120000);
+    callerSignal?.addEventListener('abort', onAbort, { once: true });
+    entry.waiting.push(line => {
+      if (line === undefined) { finish(entry.failed ?? new Error('The remote helper closed without answering.')); return; }
+      let value;
+      try { value = JSON.parse(line); } catch { finish(new Error('Invalid remote helper response. Inspect before retrying input.')); return; }
+      if (value?.isError) { finish(new Error(value.error ?? 'The remote helper reported an error.')); return; }
+      finish(undefined, value);
+    });
+    entry.child.stdin.write(JSON.stringify(request) + '\n', error => {
+      if (error) finish(new Error('The remote helper is not accepting requests.'));
+    });
   });
 }
 
@@ -36,7 +91,8 @@ function connect(path) {
 }
 
 async function socketFor(target) {
-  if (isWin) throw remoteUnsupported();
+  // macOS reaches the helper through a Unix domain socket; Windows goes through stdio instead.
+  if (isWin) return undefined;
   // macOS Unix socket names are limited to 104 bytes, regardless of the state directory's length.
   const directory = `/tmp/poki-remote-${process.getuid()}`;
   await mkdir(directory, { mode: 0o700, recursive: true });
@@ -73,6 +129,7 @@ async function socketFor(target) {
 
 export async function remoteRequest(target, request) {
   checkWork();
+  if (isWin) return stdioRequest(target, request);
   const callerSignal = signal();
   const socket = await socketFor(target);
   try { checkWork(); } catch (error) { socket.destroy(); throw error; }
