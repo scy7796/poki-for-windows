@@ -23,7 +23,7 @@ This installs Poki MCP for the client you are running in (Claude Code, Codex, or
    ./bin/setup.ps1
    ```
 
-   It clones the pinned `idevice` dependency into `.deps\idevice`, switches its TLS backend to `rustcrypto` there (it prints "patched ... Cargo.toml"; `.deps` is ignored by git, so this repository's files stay untouched), builds `idevice-tools.exe` and the bridge `build\poki-native.exe`, and runs `npm ci`. It needs access to GitHub, crates.io and npm. The first build compiles about 400 crates: under two minutes on a fast desktop, longer on a laptop. Continue only when it exits without an error.
+   It clones the pinned `idevice` dependency into `.deps\idevice`, switches its TLS backend to `rustcrypto` there (it prints "patched ... Cargo.toml"; `.deps` is ignored by git, so this repository's files stay untouched), builds `idevice-tools.exe` and the bridge `build\poki-native.exe`, and runs `npm ci`. It needs access to GitHub, crates.io and npm. The first build compiles about 400 crates and takes two to four minutes, longer on a slow laptop or network. Continue only when it exits without an error.
 
    If it fails:
 
@@ -39,29 +39,31 @@ This installs Poki MCP for the client you are running in (Claude Code, Codex, or
    python native/ocr_win.py docs/images/poki-icon.png
    ```
 
-   The second line runs OCR once on an image from this repository. The first run downloads two small models (about 6 MB) from modelscope.cn; if it fails there, report the error, since OCR on the phone will fail the same way. It prints JSON, possibly an empty list, when it works.
+   The second line runs OCR once on an image from this repository. The first run downloads two small models (about 6 MB) from modelscope.cn; if it fails there, report the error, since OCR on the phone will fail the same way. It works when the exit code is 0 and the last line is JSON, possibly an empty list. The `engine=rapidocr` line before it goes to stderr and is normal.
 
    `onnxruntime-directml` runs OCR on the GPU, and falls back to the CPU by itself on a PC without a DirectX 12 GPU. If it will not install, use `onnxruntime` instead; OCR then runs on the CPU, about five times slower.
 
    Optional, Python 3.11 or 3.12 only: `python -m pip install winsdk` adds Windows' built-in OCR as a second engine, used only when the first one cannot load. It reads only the languages installed for the Windows user.
 
-4. **Start the service in the background.** First check whether one is already running: if `node bin/call.mjs poki_mcp_status` answers, use that service and skip to step 5. Otherwise start it hidden, with its output in a private log:
+4. **Start the service in the background.** First check whether one is already running: run `node bin/call.mjs poki_mcp_status`. If it answers and its `commit` matches `git rev-parse --short HEAD`, use that service and skip to step 5. If it answers with another commit, a different Poki checkout is running: report that and ask the user which one to keep before stopping anything. Otherwise start it hidden, with its output in a private log:
 
    ```powershell
-   $log = Join-Path $env:LOCALAPPDATA 'PokiMCP\daemon.log'
-   New-Item -ItemType Directory -Force (Split-Path $log) | Out-Null
-   $p = Start-Process node -ArgumentList 'src/daemon.mjs' -WorkingDirectory $PWD -WindowStyle Hidden -RedirectStandardOutput $log -PassThru
-   for ($i = 0; $i -lt 30; $i++) {
-     if (Select-String -Quiet -Path $log -Pattern '"event":"ready"') { break }
-     if ($p.HasExited) { throw "The service exited with code $($p.ExitCode); see $log" }
+   $state = if ($env:POKI_MCP_STATE_DIR) { $env:POKI_MCP_STATE_DIR } else { Join-Path $env:LOCALAPPDATA 'PokiMCP' }
+   $log = Join-Path $state 'daemon.log'
+   New-Item -ItemType Directory -Force $state | Out-Null
+   Remove-Item $log, "$log.err" -ErrorAction SilentlyContinue
+   $p = Start-Process node -ArgumentList 'src/daemon.mjs' -WorkingDirectory $PWD -WindowStyle Hidden -RedirectStandardOutput $log -RedirectStandardError "$log.err" -PassThru
+   for ($i = 0; $i -lt 30 -and -not (Select-String -Quiet -Path $log -Pattern '"event":"ready"' -ErrorAction SilentlyContinue); $i++) {
+     if ($p.HasExited) { throw "The service exited with code $($p.ExitCode); see $log.err" }
      Start-Sleep 1
    }
+   if (-not (Select-String -Quiet -Path $log -Pattern '"event":"ready"')) { throw "No ready line after 30 s; see $log and $log.err" }
    $p.Id
    ```
 
-   Report the process ID and the log path. If no ready line appears within 30 seconds, report the end of the log. The service listens on port 47825; if another program holds that port it exits at once. State, the token, and frames live in `%LOCALAPPDATA%\PokiMCP`. Never print the token from `mcp.json`.
+   Report the process ID and the log path. On a failure, report the end of both log files. The service listens on port 47825; if another program holds that port it exits at once. State, the token, and frames live in the state folder, `%LOCALAPPDATA%\PokiMCP` by default. Never print the token from `mcp.json`.
 
-   To try the install without touching an existing service, set `$env:POKI_MCP_STATE_DIR` to a private folder and add `'--port','0'` to the arguments: the ready line then reports the port it picked. Run `bin/call.mjs` with the same `POKI_MCP_STATE_DIR` to reach it.
+   To try the install without touching an existing service, set `$env:POKI_MCP_STATE_DIR` to a private folder before the block above and add `'--port','0'` to the arguments: the log then goes there too, and the ready line reports the port it picked. The variable lasts only for the current shell, so set it again in every new shell that runs `bin/call.mjs` for this service.
 
 5. **Register your own client and install its skill.** Keep existing configuration. Choose only the client you are running in:
 
@@ -91,7 +93,7 @@ This installs Poki MCP for the client you are running in (Claude Code, Codex, or
 6. **Pair the iPhone.** Do these in order; each STOP waits for the user.
 
    1. Check the Apple USB service with `Test-NetConnection 127.0.0.1 -Port 27015`. If it is `False`, **STOP:** ask the user to open the Apple Devices app, then check again. Nothing reaches the phone until this port answers.
-   2. **STOP:** ask the user to connect the iPhone by USB, unlock it, and tap **Trust This Computer**. Then run `node bin/call.mjs list_devices` and note the phone's `id`.
+   2. **STOP:** ask the user to connect the iPhone by USB, unlock it, and tap **Trust This Computer**. Then run `node bin/call.mjs list_devices` and note the phone's `id`. An empty list with port 27015 answering means the Apple service does not see the phone: ask the user to unlock it, replug the cable, and accept Trust again, then run it again.
    3. Run `node bin/prepare-device.mjs <id>`. If its `Developer mode` line starts with "needs a person", the run has just made the Developer Mode switch appear on the phone, and the disk-image line after it will fail; that is expected at this point. **STOP:** ask the user to open Settings → Privacy & Security → Developer Mode, turn it on, restart the phone when it asks, and unlock it again. It cannot be switched on from the PC while the phone has a passcode, so do not rely on `--enable-developer-mode`.
    4. Run `node bin/prepare-device.mjs <id>` again. Now it should report Developer Mode on and install Apple's developer disk image through pymobiledevice3. If the download fails, the image has to come from a Mac whose Xcode matches the phone's iOS version: ask the user for an unpacked `iOS_DDI/Restore` directory, set `$env:POKI_DDI_DIR` to it, and run again.
    5. **STOP:** ask the user to open Settings → Developer → UI Automation and turn it on.
@@ -118,6 +120,6 @@ This installs Poki MCP for the client you are running in (Claude Code, Codex, or
 
 ## Update
 
-When the user asks to update, run `git pull --ff-only` in the checkout. If the pull stops because of local changes, report them and leave them alone: do not reset, stash, or switch branches for the user. Then stop the service before building, because Windows will not let `npm ci` replace files a running process has loaded: ask the user, then end the `node` process running `src/daemon.mjs` from this checkout together with its children, `taskkill /PID <id> /T /F`, so no `poki-native.exe` it started is left behind. Run `./bin/setup.ps1`, start the service as in step 4, and run `node bin/call.mjs poki_mcp_status`.
+When the user asks to update, run `git pull --ff-only` in the checkout. If the pull stops because of local changes, report them and leave them alone: do not reset, stash, or switch branches for the user. Then stop the service before building, because Windows will not let `npm ci` replace files a running process has loaded: ask the user, then stop it with its children so no `poki-native.exe` it started is left behind. Take the process ID from the state folder's `mcp.json` (`$state` as set in step 4), not from a process list, since another checkout may run its own `src/daemon.mjs`: `$svc = (Get-Content (Join-Path $state 'mcp.json') | ConvertFrom-Json).pid`, then `taskkill /PID $svc /T /F`. Run `./bin/setup.ps1`, start the service as in step 4, and run `node bin/call.mjs poki_mcp_status`.
 
 `bin/update.mjs` has a Windows branch that runs `bin/setup.ps1` through `pwsh` (PowerShell 7), which is not installed on every PC and has not been tested here; prefer the steps above.
