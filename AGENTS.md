@@ -118,6 +118,6 @@ This installs Poki MCP for the client you are running in (Claude Code, Codex, or
 
 ## Update
 
-When the user asks to update, run `git pull --ff-only` in the checkout. If the pull stops because of local changes, report them and leave them alone: do not reset, stash, or switch branches for the user. Then stop the service before building, because Windows will not let `npm ci` replace files a running process has loaded: ask the user before ending the `node` process running `src/daemon.mjs` from this checkout. Run `./bin/setup.ps1`, start the service as in step 4, and run `node bin/call.mjs poki_mcp_status`.
+When the user asks to update, run `git pull --ff-only` in the checkout. If the pull stops because of local changes, report them and leave them alone: do not reset, stash, or switch branches for the user. Then stop the service before building, because Windows will not let `npm ci` replace files a running process has loaded: ask the user, then end the `node` process running `src/daemon.mjs` from this checkout together with its children, `taskkill /PID <id> /T /F`, so no `poki-native.exe` it started is left behind. Run `./bin/setup.ps1`, start the service as in step 4, and run `node bin/call.mjs poki_mcp_status`.
 
 `bin/update.mjs` has a Windows branch that runs `bin/setup.ps1` through `pwsh` (PowerShell 7), which is not installed on every PC and has not been tested here; prefer the steps above.
