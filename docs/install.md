@@ -1,3 +1,5 @@
+> This is Poki's macOS install guide, kept from upstream. On Windows, follow [AGENTS.md](../AGENTS.md) or [docs/windows.md](windows.md).
+
 # Install
 
 For experimental access across networks, see [iPhone over Tailscale](remote-iphone.md). The iPhone needs the Tailscale app and an initial trusted USB setup.

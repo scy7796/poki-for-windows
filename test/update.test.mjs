@@ -120,6 +120,6 @@ test('poki update fast-forwards a clean main checkout and preserves dirty or non
   await mkdir(packaged); await cp(join(installed, 'src'), join(packaged, 'src'), { recursive: true });
   await cp(join(installed, 'package.json'), join(packaged, 'package.json')); await copyCLI(packaged);
   const download = await cli(packaged, ['update']);
-  assert.equal(download.code, 0, download.stderr); assert.match(download.stdout, /https:\/\/github.com\/JosssphZhou\/poki\/releases\/latest/);
+  assert.equal(download.code, 0, download.stderr); assert.match(download.stdout, /git clone https:\/\/github.com\/scy7796\/poki-for-windows\.git/);
   t.diagnostic(`$ poki update (prebuilt package)\n${download.stdout}`);
 });

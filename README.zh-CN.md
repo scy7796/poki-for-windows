@@ -6,7 +6,7 @@
 
 <p align="center">
   在 Windows 电脑上通过 MCP 操作真实的 iPhone：截图、读无障碍树、OCR、点击、打字、滑动。<br>
-  <a href="https://github.com/JosssphZhou/poki">Poki</a> v0.1.1 的社区移植版，原版运行在 macOS 上。
+  <a href="https://github.com/JosssphZhou/poki">Poki</a> v0.1.1 的社区移植版，原版运行在 macOS 上。由 <a href="https://github.com/scy7796">Chenyu Shi</a> 移植和维护。
 </p>
 
 <p align="center">
@@ -95,8 +95,12 @@ claude mcp add --scope user poki-mcp -- node "$PWD\src\stdio.mjs"
 
 ## 与 Poki 的关系
 
-Poki 由 [Joseph Zhou](https://github.com/JosssphZhou)（X 上是 [@openmys](https://x.com/openmys)）和贡献者编写，官网是 [poki.bot](https://poki.bot)。本仓库保留了 Poki 的提交历史和 AGPL-3.0-only 许可证，在 v0.1.1 的基础上加了 Windows 移植。Poki 的维护者手上没有 Windows 机器可以测试，所以请这个移植版放在单独的仓库里维护，也就是这里。跟 Windows 无关的那个修复已经提回上游：[JosssphZhou/poki#39](https://github.com/JosssphZhou/poki/pull/39)。
+Poki 由 [Joseph Zhou](https://github.com/JosssphZhou)（X 上是 [@openmys](https://x.com/openmys)）和贡献者编写，官网是 [poki.bot](https://poki.bot)。本仓库保留了 Poki 的提交历史和 AGPL-3.0-only 许可证，在 v0.1.1 的基础上加了 Windows 移植。Poki 的维护者手上没有 Windows 机器可以测试，所以请这个移植版放在单独的仓库里。移植是我（[Chenyu Shi](https://github.com/scy7796)）做的，也由我在这里维护。跟 Windows 无关的那个修复已经提回上游：[JosssphZhou/poki#39](https://github.com/JosssphZhou/poki/pull/39)。
 
 Poki 原来的说明保留为 [README.poki.md](README.poki.md) 和各语言版本（`README.poki.zh-CN.md` 等）。移植的设计说明在 [docs/windows.md](docs/windows.md)。
 
 只在 Windows 上出现的问题，请在这里提。在 Mac 上也能复现的问题，请提到上游。
+
+## 开源许可
+
+和 Poki 一样采用 AGPL-3.0-only，见 [LICENSE](LICENSE)。Poki 的版权属于 Joseph Zhou 和贡献者（Copyright (c) 2026 Joseph Zhou and contributors），Windows 移植部分的版权属于 Chenyu Shi（Copyright (c) 2026 Chenyu Shi）。开源依赖保留各自的许可证，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

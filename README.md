@@ -6,7 +6,7 @@
 
 <p align="center">
   Drive a real iPhone from a Windows PC through MCP: screenshots, the accessibility tree, OCR, taps, typing and swipes.<br>
-  A community port of <a href="https://github.com/JosssphZhou/poki">Poki</a> v0.1.1, which targets macOS.
+  A community port of <a href="https://github.com/JosssphZhou/poki">Poki</a> v0.1.1, which targets macOS. Built and maintained by <a href="https://github.com/scy7796">Chenyu Shi</a>.
 </p>
 
 <p align="center">
@@ -95,8 +95,12 @@ From a real task log: setting up an iOS Shortcuts automation took 38 UI steps, a
 
 ## Relationship to Poki
 
-Poki is written by [Joseph Zhou](https://github.com/JosssphZhou) ([@openmys](https://x.com/openmys) on X) and contributors; its site is [poki.bot](https://poki.bot). This repository keeps Poki's history and its AGPL-3.0-only license, and adds the Windows port on top of v0.1.1. Poki's maintainers have no Windows machine to test on, so they asked for the port to live in its own repository, and it is maintained here. The fix that is not Windows-specific went back upstream as [JosssphZhou/poki#39](https://github.com/JosssphZhou/poki/pull/39).
+Poki is written by [Joseph Zhou](https://github.com/JosssphZhou) ([@openmys](https://x.com/openmys) on X) and contributors; its site is [poki.bot](https://poki.bot). This repository keeps Poki's history and its AGPL-3.0-only license, and adds the Windows port on top of v0.1.1. Poki's maintainers have no Windows machine to test on, so they asked for the port to live in its own repository. I ([Chenyu Shi](https://github.com/scy7796)) wrote the port and maintain it here. The fix that is not Windows-specific went back upstream as [JosssphZhou/poki#39](https://github.com/JosssphZhou/poki/pull/39).
 
 Poki's own READMEs are kept as [README.poki.md](README.poki.md) and its translations (`README.poki.zh-CN.md` and so on). The port's design notes are in [docs/windows.md](docs/windows.md).
 
 Problems that only happen on Windows belong here. Problems you can reproduce on a Mac belong upstream.
+
+## License
+
+AGPL-3.0-only, like Poki; see [LICENSE](LICENSE). Poki is Copyright (c) 2026 Joseph Zhou and contributors. The Windows port is Copyright (c) 2026 Chenyu Shi. Open-source dependencies keep their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -20,14 +20,14 @@
     "zod": "^4.2.0"
   },
   "license": "AGPL-3.0-only",
-  "description": "Local MCP tools for iPhone and iOS Simulator automation on macOS.",
+  "description": "Local MCP tools for driving a physical iPhone from Windows. A port of Poki (github.com/JosssphZhou/poki).",
   "repository": {
     "type": "git",
-    "url": "https://github.com/JosssphZhou/poki.git"
+    "url": "https://github.com/scy7796/poki-for-windows.git"
   },
-  "homepage": "https://github.com/JosssphZhou/poki",
+  "homepage": "https://github.com/scy7796/poki-for-windows",
   "bugs": {
-    "url": "https://github.com/JosssphZhou/poki/issues"
+    "url": "https://github.com/scy7796/poki-for-windows/issues"
   },
   "bin": {
     "poki-mcp": "bin/poki-mcp"
