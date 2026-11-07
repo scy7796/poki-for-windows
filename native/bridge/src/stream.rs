@@ -92,11 +92,14 @@ pub async fn start_screen_media_stream(
         CLIENT_SUPPORTED_FEATURES,
         client_session_id,
     );
-    client
-        .start_media_stream(audio_params)
-        .await
-        .map_err(|e| format!("audio startMediaStream failed: {e:?}"))?;
-    log!("audio stream started (session {client_session_id})");
+    // Device Hub starts audio first, but only the video stream holds dtuhidd's authentication
+    // gate open (pymobiledevice3 and go-ios start video alone). A refused audio start (seen
+    // over RemotePairing from Windows) is therefore logged, not fatal; a failed video start
+    // below still fails the input, so a touch is never reported as sent without the gate.
+    match client.start_media_stream(audio_params).await {
+        Ok(_) => log!("audio stream started (session {client_session_id})"),
+        Err(_error) => log!("audio stream unavailable ({_error:?}); continuing with video only"),
+    }
 
     // Start the video stream on the same session.
     let call_id = uuid::Uuid::new_v4().to_string().to_uppercase();
