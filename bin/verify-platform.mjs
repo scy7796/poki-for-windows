@@ -7,9 +7,13 @@ import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { root } from '../src/config.mjs';
+import { isWin } from '../src/os.mjs';
 
 const device = process.argv[2];
 if (!device) throw new Error('Usage: verify-platform.mjs QA_SIMULATOR_UDID');
+// Every step below drives a simulator through Xcode, and the first assertion insists on one.
+// Saying so beats failing with "Unknown tool: start_simulator".
+if (isWin) throw new Error('This acceptance run needs an iOS simulator and Xcode, which this host does not have. It is the macOS platform check; on Windows the equivalent is npm test plus the steps in docs/windows.md.');
 const bundle = 'local.pokimcp.fixture';
 const directory = join(root,'.runtime',`platform-acceptance-${Date.now()}`);
 await mkdir(directory,{recursive:true,mode:0o700});

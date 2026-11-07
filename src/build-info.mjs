@@ -12,14 +12,20 @@ const bridge = nativeBin;
 async function codeMarker() {
   const files = (await readdir(join(root, 'src'), { recursive: true }))
     .filter(file => file.endsWith('.mjs')).map(file => join('src', file));
+  files.push('package.json');
   // The helper is named per platform, so the recorded marker carries the name it actually has.
-  files.push('package.json', bridge.slice(root.length + 1).split(sep).join('/'));
-  return JSON.stringify(await Promise.all(files.sort().map(async file => {
-    const info = await stat(join(root, file)).catch(error => {
+  // POKI_NATIVE may point outside the checkout, where slicing off the root produces a path that
+  // does not exist; that entry then vanished from the marker and a rebuilt bridge never made the
+  // service look out of date. An outside bridge is recorded by its own absolute path instead.
+  const inside = bridge.startsWith(root + sep);
+  const entries = [...files.map(file => ({ key: file, path: join(root, file) })),
+    { key: inside ? bridge.slice(root.length + 1).split(sep).join('/') : bridge, path: bridge }];
+  return JSON.stringify(await Promise.all(entries.sort((a, b) => a.key.localeCompare(b.key)).map(async entry => {
+    const info = await stat(entry.path).catch(error => {
       if (error.code === 'ENOENT') return null;
       throw error;
     });
-    return [file, info && [info.mtimeMs, info.ctimeMs, info.size, info.ino]];
+    return [entry.key, info && [info.mtimeMs, info.ctimeMs, info.size, info.ino]];
   })));
 }
 

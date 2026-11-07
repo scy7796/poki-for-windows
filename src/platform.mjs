@@ -595,7 +595,12 @@ async function listCrashes(target, args) {
     // devicectl is Xcode's; the same crash directory is reachable over CrashReportCopyMobile.
     await platformRun(idevice, ['--udid', target.id, 'crash_logs', 'flush'], { timeout: 60000 }).catch(() => {});
     const listing = await platformRun(idevice, ['--udid', target.id, 'crash_logs', 'list', '/'], { timeout: 120000 });
-    reports = reportsFromListing(listing.stdout + '\n' + listing.stderr).map(report => ({ ...report, modified: null }));
+    const raw = `${listing.stdout}\n${listing.stderr}`;
+    const parsed = reportsFromListing(raw);
+    // An unreadable listing is not an empty one: saying "no crash reports" when the reply could
+    // not be parsed hides a failure behind what looks like an answer.
+    if (!parsed.length && raw.trim()) throw new Error(`The crash report listing could not be read. Reply began: ${raw.trim().slice(0, 300)}`);
+    reports = parsed.map(report => ({ ...report, modified: null }));
   } else {
     const result = await devicectl(target.id, ['device', 'info', 'files', '--domain-type', 'systemCrashLogs']);
     reports = (result.files ?? []).filter(item => !item.resources?.isDirectory).map(item => ({ path: item.relativePath, name: item.name, modified: item.metadata?.lastModDate, size: item.metadata?.size }));

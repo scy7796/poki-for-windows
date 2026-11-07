@@ -120,6 +120,9 @@ export async function processGone(pid, timeoutMs = 4000) {
   const ended = () => {
     if (!isWin) { try { process.kill(pid, 0); return false; } catch { return true; } }
     const listing = spawnSync('tasklist', ['/FI', `PID eq ${pid}`, '/NH'], { encoding: 'utf8' }).stdout;
+    // A failed query has no output; treating that as "the process is gone" would pass a test for
+    // the wrong reason, so an unreadable answer counts as still running.
+    if (typeof listing !== 'string') return false;
     return !new RegExp(`\\b${pid}\\b`).test(listing);
   };
   const deadline = Date.now() + timeoutMs;
