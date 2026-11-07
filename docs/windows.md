@@ -62,6 +62,39 @@ node bin/prepare-device.mjs     # developer mode, then the developer disk image
 node bin/call.mjs poki_mcp_status
 ```
 
+## Using the phone over the network
+
+Being on the same network is not enough. usbmuxd finds a phone over Wi-Fi only when the
+phone advertises `_apple-mobdev2._tcp`, which it does only after this host is allowed to
+connect over Wi-Fi. That permission lives on the device, and the only way to set it is a
+lockdown session — so the cable is needed exactly once:
+
+```powershell
+# with the iPhone connected over USB and unlocked
+python -m pymobiledevice3 lockdown wifi-connections on      # was false
+node bin/prepare-remote.mjs <UDID> <phone-lan-ip>            # RemotePairing pairing file
+```
+
+After that the cable can come out. `remote.mjs` drives the helper over its stdio form on
+Windows, because the Unix domain socket the macOS path uses does not exist here; one
+helper stays resident per pairing file, so the tunnel is built once rather than per call.
+Measured over the iPhone's own hotspot (172.20.10.0/24), cable removed:
+
+| Call | Cold | Note |
+| --- | --- | --- |
+| `take_screenshot` | 5.7 s | includes the RemotePairing tunnel |
+| `list_elements` | 2.8 s | 20 elements, accessibility source |
+
+Two things to know when it does not appear:
+
+* `pymobiledevice3 doctor` reports `Bonjour discovery: queries left the host on 2 of 41
+  interface(s)`. A machine with WSL, Hyper-V, VPN adapters and Bluetooth networking has
+  many interfaces, and mDNS can leave through the wrong one. If the phone still does not
+  appear, that is the first thing to look at.
+* `Pairing: 0 own, 0 RemotePairing` means no pairing file exists yet, and the cellular
+  path cannot work without one. `remote pair` is for Apple TV-style pin pairing; a
+  standard iPhone gets its file from `bin/prepare-remote.mjs` over USB.
+
 ## What the phone still needs
 
 Both of these are the phone's, not the host's:
