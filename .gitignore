@@ -9,3 +9,6 @@ build/
 
 # Compiled by test/shim.c; rebuilt by bin/setup.ps1 and by the test fixture on demand.
 test/shim.exe
+
+__pycache__/
+*.pyc
