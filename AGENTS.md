@@ -1,46 +1,77 @@
-# Install Poki for your client
+# Install Poki for Windows for your client
 
-Choose the installation path first:
+These steps are for an agent installing this repository on a Windows 11 PC. Run commands in PowerShell from the checkout unless a step says otherwise. At each **STOP**, tell the user exactly what they must do, then wait for them to confirm. Report the steps you finished and the ones left. Never call a stopped installation complete.
 
-- **MCP only.** If the user already uses Claude Code, Codex, or another MCP client and only asks to install this repository, connect Poki MCP to that client. Use the user's existing subscription and model. No extra model account or Poki login is needed. Follow steps 1–5 and the MCP checks in step 7, then end the installation. Skip step 6, including model login and the optional unlock question.
-- **Poki Agent.** If the user explicitly wants Poki's standalone terminal agent or its messaging channels, also follow step 6. Poki Agent needs its own model access setup through `poki login`.
+This installs Poki MCP for the client you are running in (Claude Code, Codex, or another MCP client), using the user's existing subscription. Poki Agent, Poki's own terminal agent with iMessage and Telegram channels, has not been tested on Windows; skip it unless the user asks, and say it is untested if they do.
 
-Follow these steps for the selected path. At each **STOP**, tell the user what they must do and wait for confirmation. Report completed steps and the remaining steps. Never describe a stopped installation as complete.
+1. **Check prerequisites.** Check each of these and report every one that is missing with its install hint before going on:
 
-1. **Check prerequisites.** Read [requirements](docs/install.md#requirements). Check macOS, full Xcode, Git, Python 3, Node.js 24+, npm, Rust/Cargo, ffmpeg, and ffprobe. **STOP if Xcode is missing or unfinished.** Ask the user to install full Xcode, open it, and complete its setup. For another missing prerequisite, report the exact tool and installation hint before continuing.
+   | Tool | Check | Install hint |
+   | --- | --- | --- |
+   | Git | `git --version` | `winget install Git.Git` |
+   | Node.js 24+ | `node -v` | `winget install OpenJS.NodeJS` |
+   | Python 3.11+ | `python -V` | `winget install Python.Python.3.12` (on this machine, call `python`, not `python3`) |
+   | Rust | `cargo -V` | `winget install Rustlang.Rustup`, then open a new terminal |
+   | ffmpeg | `ffmpeg -version` | `winget install Gyan.FFmpeg` |
+   | Apple Devices | `Get-AppxPackage AppleInc.AppleDevices` | Microsoft Store, "Apple Devices" |
 
-2. **Clone and build.** Use the repository URL supplied by the user, or `https://github.com/JosssphZhou/poki.git`. Clone into a new directory, enter it, and run `./bin/setup`. If already in the intended checkout, use it. Continue only when setup exits successfully. Setup fetches its pinned dependency and builds the native helpers. See [installation troubleshooting](docs/install.md#fix-common-problems) on failure.
+   **STOP if Apple Devices is missing.** Installing a Store app needs the user. A newly installed tool may need a new terminal before it is on `PATH`.
 
-3. **Start the daemon in the background.** Run `npm start` with a persistent background process and a private log. Wait for a log line containing `"event":"ready"`. Keep the process running and report its PID and log path. For an isolated installation, set `POKI_MCP_STATE_DIR` to a new absolute directory and run `npm start -- --port 0`. Pass that same state directory to every client and terminal command below. Keep existing services and their state directories unchanged. Never print the token in `mcp.json`.
+2. **Clone and build.** Use the repository URL the user gave, or `https://github.com/scy7796/poki-for-windows.git`. Clone into a new directory and enter it; if you are already in the intended checkout, use it. Run:
 
-4. **Register your own client and install its skill.** Preserve existing configuration. From the checkout, choose only your client:
+   ```powershell
+   ./bin/setup.ps1
+   ```
 
-   - Claude Code: `claude mcp add --scope user poki-mcp -- node "$PWD/src/stdio.mjs"`. With an isolated state directory, add `--env POKI_MCP_STATE_DIR="$POKI_MCP_STATE_DIR"` before `poki-mcp`. Install the skill at `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/poki-mcp` (normally `~/.claude/skills/poki-mcp`).
-   - Codex: `codex mcp add poki-mcp -- node "$PWD/src/stdio.mjs"`. With an isolated state directory, add `--env POKI_MCP_STATE_DIR="$POKI_MCP_STATE_DIR"` before `poki-mcp`. Install the skill at `${CODEX_HOME:-$HOME/.codex}/skills/poki-mcp` (normally `~/.codex/skills/poki-mcp`).
+   It fetches the pinned `idevice` dependency, builds `idevice-tools.exe` and the bridge `build\poki-native.exe`, and runs `npm ci`. Continue only when it exits without an error. If linking fails with `LNK1104: cannot open file 'msvcrt.lib'`, the MSVC C++ workload is missing: run `rustup default stable-x86_64-pc-windows-gnu` and run setup again. If PowerShell refuses to run the script, run it as `powershell -ExecutionPolicy Bypass -File bin/setup.ps1` for this one call instead of changing the user's policy.
 
-   Create the parent skill directory, then copy the whole `skills/poki-mcp` directory to that destination. If a skill or MCP entry already exists, inspect it and preserve unrelated changes. Read the installed `SKILL.md` before any phone operation. Verify the registered absolute path and the installed skill contents. Other clients use [the MCP configuration examples](docs/install.md#2-connect-an-mcp-client) and their supported skill directory. If tools or skills need a new session to load, tell the user.
+3. **Install the Python packages.** These give Poki its OCR and its developer-disk-image downloader:
 
-5. **Pair the iPhone. STOP before any device command unless the user has confirmed this phone is prepared.** Ask the user to connect the iPhone over USB, unlock it, and accept **Trust This Computer**. **STOP for Developer Mode** until the user enables it and completes any restart prompts. **STOP for UI Automation** until the user enables it in Developer Settings. Read [physical iPhone setup](docs/physical-iphone.md) for developer support files and `node bin/prepare-device.mjs YOUR_DEVICE_ID`. Run that helper only after confirmation. If Apple support files are missing, ask the user to finish device preparation in Xcode. After pairing, keep the phone unlocked on the same network as the Mac. Device discovery alone does not prove screen capture or input works.
+   ```powershell
+   python -m pip install rapidocr onnxruntime-directml winsdk pymobiledevice3
+   ```
 
-6. **Install Poki Agent and choose channels, only when requested.** From the repository root, run `npm ci --prefix agent` and add this checkout to the current terminal path with `export PATH="$PWD/bin:$PATH"`. Present the optional unlock question below together with the model-login stop. **STOP for model account login.** Give the user the checkout path and the same `export PATH="$PWD/bin:$PATH"` command for their own terminal. Ask them to run `poki login` there and complete their chosen login method themselves. Read [Poki Agent](agent/README.md) for the API-key alternative and terminal tasks. Keep secrets out of chat, logs, and committed files. iMessage is optional. Skip it with `./bin/setup-channels --channel none`. If requested, read [the iMessage guide](docs/imessage-gateway.md) before `./bin/setup-channels --channel imessage`. Stop for the user's Messages sign-in, BlueBubbles onboarding, and macOS permissions. Confirm the sender and destination before starting `poki imessage`. For Telegram, follow the channel configuration in [Poki Agent](agent/README.md) before `poki telegram`. Both commands start workers that can send replies.
+   `onnxruntime-directml` runs OCR on the GPU. If it will not install, use `onnxruntime` instead; OCR then works on the CPU, about five times slower.
 
-   **Optional unlock configuration. Ask this exact question after installing Poki Agent, and include the three disclosures in the same message:** "Do you want Poki Agent to unlock this iPhone when it is locked?" **STOP for the answer. Default to no configuration.** Asking this question does not operate the phone. Ask it even when pairing or phone operations are skipped. Skip the question only if the user has already explicitly declined optional unlock. Poki Agent can use `POKI_IPHONE_PASSCODE` when the phone is locked. Explain all three points before asking for a decision: the passcode stays on this Mac and does not enter the model or logs; anyone or any program with access to this Mac may be able to read it; verification covers only iPhone17,1 with a 402-by-874-point keypad, portrait orientation, and six digits. If the user declines, skip this option. Other features remain available. Only the user may configure this value in their private local launcher environment. Never read or write the user's passcode for them. The host passes it locally to the helper over stdin, outside model inputs and logs. If the user agrees, give them the hidden-input commands in [optional iPhone unlock](agent/README.md#optional-iphone-unlock) to run in their own terminal. Never ask them to send the passcode in chat. Setup builds `build/native-target/release/examples/unlock_iphone`. Check that this executable exists before offering the option. Without configuration, ask the user to unlock manually.
+4. **Start the service in the background.** Start it hidden, with its output in a private log, and keep it running:
 
-7. **Verify and report.** After the relevant user confirmations, run from the checkout with the daemon's state directory:
+   ```powershell
+   $log = Join-Path $env:LOCALAPPDATA 'PokiMCP\daemon.log'
+   New-Item -ItemType Directory -Force (Split-Path $log) | Out-Null
+   Start-Process node -ArgumentList 'src/daemon.mjs' -WorkingDirectory $PWD -WindowStyle Hidden -RedirectStandardOutput $log
+   ```
 
-   ```sh
+   Wait until the log has a line containing `"event":"ready"`, then report the node process ID and the log path. If the port is already taken, a service is probably running already; check it with `node bin/call.mjs poki_mcp_status` instead of starting a second one. State, the token, and frames live in `%LOCALAPPDATA%\PokiMCP`. Never print the token from `mcp.json`.
+
+5. **Register your own client and install its skill.** Keep existing configuration. Choose only the client you are running in:
+
+   - Claude Code: `claude mcp add --scope user poki-mcp -- node "$PWD\src\stdio.mjs"`, then copy the skill: `Copy-Item -Recurse skills\poki-mcp "$env:USERPROFILE\.claude\skills\poki-mcp"`.
+   - Codex: `codex mcp add poki-mcp -- node "$PWD\src\stdio.mjs"`, then copy the skill to `$env:USERPROFILE\.codex\skills\poki-mcp`.
+
+   Create the parent `skills` folder first if it does not exist. If an MCP entry or skill named `poki-mcp` already exists, look at it first and keep the user's unrelated changes. Check that the registered path is absolute and points at this checkout. Read the installed `SKILL.md` before any phone operation. If the client only loads new tools in a new session, tell the user.
+
+6. **Pair the iPhone. STOP before any device command until the user confirms each item.**
+
+   - Open the Apple Devices app. It runs the Apple USB service on `127.0.0.1:27015`; nothing reaches the phone until it runs. Check with `Test-NetConnection 127.0.0.1 -Port 27015`.
+   - **STOP:** ask the user to connect the iPhone by USB, unlock it, and tap **Trust This Computer**.
+   - **STOP for Developer Mode:** Settings → Privacy & Security → Developer Mode, on, then the restart the phone asks for. It cannot be switched on from the PC while the phone has a passcode.
+   - **STOP for UI Automation:** Settings → Developer → UI Automation, on.
+
+   Then run `node bin/prepare-device.mjs`. It reports Developer Mode and installs Apple's developer disk image through pymobiledevice3. If that download fails, the image has to come from a Mac whose Xcode matches the phone's iOS version: ask the user for an unpacked `iOS_DDI/Restore` directory and run again with `$env:POKI_DDI_DIR` set to it. Done means `com.apple.coredevice.displayservice` appears in `.deps\idevice\target\release\idevice-tools.exe --udid <id> remotexpc`.
+
+7. **Wi-Fi, only when the user asks for it.** With the phone still on USB and unlocked, run `python -m pymobiledevice3 lockdown wifi-connections on`, then `node bin/prepare-remote.mjs <device id> <phone IP>`. After that the cable can come out. Tell the user two things: input fails with CoreDevice error 9022 while another app on the phone holds the microphone, and Wi-Fi taps are slower than USB (about 7 s each in testing).
+
+8. **Verify and report.** Run:
+
+   ```powershell
    node bin/call.mjs poki_mcp_status
    node bin/call.mjs list_devices
    ```
 
-   Report the version, commit, `total_tools`, and whether the intended device appears. The default MCP `tools/list` exposes the tools for phone tasks. `total_tools` counts the complete catalog, including tools callable without default discovery. `POKI_MCP_TOOLS=all` exposes the complete list. Verify current output instead of treating either count as proof that installation works. For the Poki Agent path, run `poki status` after login. After authorization for a phone task, use `poki "<user task>"` and verify its actual result. With multiple devices, pass `--device '<device UUID>'`. Report any untested pairing, login, channel, or phone operation explicitly.
+   Report the version, the commit, `total_tools`, and whether the phone appears, with its `readiness` text. Over USB that text only says the phone was discovered; seeing it listed does not prove screenshots or input work. Before any tap, ask the user what is on the phone screen and get their go-ahead; then tap something harmless and check that the screen changed. Report every step you did not test (pairing, Wi-Fi, a tap) as untested.
 
 ## Update
 
-When the user asks to update Poki, run `./bin/poki update` from this installation. A source checkout must be on `main` with no local changes, including untracked files. The command runs `git fetch`, then `git merge --ff-only --no-overwrite-ignore @{upstream}`, then `./bin/setup`. If incoming files conflict with local ignored files, the merge stops and preserves them. If it stops, report the reason and preserve the user's changes. Do not reset, stash, or switch branches on their behalf. For a prebuilt package, follow the download steps printed by the command.
+When the user asks to update, run `git pull --ff-only` in the checkout, then `./bin/setup.ps1`. If the pull stops because of local changes, report them and leave them alone: do not reset, stash, or switch branches for the user. Tell the user to stop the running service (end the `node` process running `src/daemon.mjs`) and start it again as in step 4. Then run `node bin/call.mjs poki_mcp_status`.
 
-After a successful source update, reinstall Poki Agent dependencies with `npm ci --prefix agent` if the user uses Poki Agent. Tell the user to stop their existing service and restart it with `npm start`, using the same `POKI_MCP_STATE_DIR`. Updating does not restart the service. After restart, call `poki_mcp_status` and, for Poki Agent users, run `poki status`. Report the installed version and any remaining update notice.
-
-Poki checks `https://api.github.com/repos/JosssphZhou/poki/releases/latest` at service startup and once per day. This anonymous request sends no token, device information, or conversation data. Results and failed attempts are cached for 24 hours in `POKI_MCP_STATE_DIR/update-check.json`. With the default state directory, this file is in `~/Library/Application Support/PokiMCP`. Startup does not wait for the request. Requests time out after 1.5 seconds, and failures stay silent. Status includes a newer stable version, the first sentence of its release notes, a release link, and `poki update`. Tell the user when that notice appears.
-
-To disable checks and notices, set `POKI_NO_UPDATE_CHECK=1` before starting the service. Set it in your terminal too to hide notices in `poki status` from an already running service.
+`bin/update.mjs` has a Windows branch that runs `bin/setup.ps1` through `pwsh` (PowerShell 7), but it has not been tested here; prefer the steps above.

@@ -2,155 +2,87 @@
   <img src="docs/images/poki-icon.png" width="72" height="72" alt="Poki icon">
 </p>
 
-<h1 align="center">Poki uses your iPhone like you do</h1>
+<h1 align="center">Poki for Windows</h1>
 
 <p align="center">
-  <img src="docs/images/poki-home.gif" width="720" alt="Poki website home page animation">
+  Drive a real iPhone from a Windows PC through MCP: screenshots, the accessibility tree, OCR, taps, typing and swipes.<br>
+  A community port of <a href="https://github.com/JosssphZhou/poki">Poki</a> v0.1.1, which targets macOS.
 </p>
 
-<p align="center">
-  English | <a href="README.zh-CN.md">简体中文</a> | <a href="README.zh-TW.md">繁體中文</a> | <a href="README.ja.md">日本語</a> | <a href="README.ko.md">한국어</a> | <a href="README.es.md">Español</a><br>
-  <a href="https://poki.bot">poki.bot</a>
-</p>
-
-<!-- badges:start -->
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-blue" alt="License: AGPL-3.0-only"></a>
-  <a href="https://github.com/JosssphZhou/poki/stargazers"><img src="https://img.shields.io/github/stars/JosssphZhou/poki" alt="GitHub stars"></a>
-  <a href="https://github.com/JosssphZhou/poki/forks"><img src="https://img.shields.io/github/forks/JosssphZhou/poki" alt="GitHub forks"></a>
-  <a href="https://github.com/JosssphZhou/poki/issues"><img src="https://img.shields.io/github/issues/JosssphZhou/poki" alt="GitHub issues"></a>
-  <a href="https://github.com/JosssphZhou/poki/releases"><img src="https://img.shields.io/github/v/release/JosssphZhou/poki" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20iOS-lightgrey" alt="Platform: macOS and iOS">
+  <img src="https://img.shields.io/badge/host-Windows%2011-0078D4" alt="Host: Windows 11">
+  <img src="https://img.shields.io/badge/phone-iOS%2027-lightgrey" alt="Phone: iOS 27">
+  <img src="https://img.shields.io/badge/tests-90%20pass%20%7C%200%20fail-brightgreen" alt="Tests: 90 pass, 0 fail">
 </p>
-<!-- badges:end -->
 
-## Quick start
+Same MCP server, same tools, same Rust bridge as Poki. What changes is how the PC reaches the phone, where state lives, which OCR engine reads the screen, and which tools are left out because they need Xcode. You only need a Mac if pymobiledevice3 cannot download the developer disk image for your iOS version.
 
-**Let your agent install it.** Copy this to your agent:
+## Let your agent install it
+
+Paste this into Claude Code, Codex, or any agent that can run PowerShell:
 
 ```text
-Install https://github.com/JosssphZhou/poki following its root AGENTS.md, including the MCP skill, and stop whenever you need me to act.
+Install https://github.com/scy7796/poki-for-windows following its root AGENTS.md, including the MCP skill, and stop whenever you need me to act.
 ```
 
-**Poki MCP.** Already using Claude Code, Codex, or another MCP client? Connect Poki MCP and use your own subscription. No extra model account needed.
+[AGENTS.md](AGENTS.md) walks the agent through prerequisites, the build, starting the service, registering your MCP client, and pairing the iPhone. It stops and asks you for the parts only you can do on the phone: Trust This Computer, Developer Mode, UI Automation.
 
-Start the server and keep it running:
+## Install it yourself
 
-```sh
-git clone https://github.com/JosssphZhou/poki.git
-cd poki
-./bin/setup
-npm start
+You need Windows 11, Git, Node.js 24+, Python 3.11+, Rust (rustup), ffmpeg, and the Apple Devices app from the Microsoft Store.
+
+```powershell
+git clone https://github.com/scy7796/poki-for-windows.git
+cd poki-for-windows
+./bin/setup.ps1
+python -m pip install rapidocr onnxruntime-directml winsdk pymobiledevice3
 ```
 
-Requires macOS 15 or later, full Xcode, Rust, Node.js 24+, and ffmpeg. `./bin/setup` checks for missing dependencies. The initial build takes a few minutes.
+Open the Apple Devices app (it runs the USB service on `127.0.0.1:27015`), plug in the iPhone, unlock it and tap Trust. Then:
 
-### Prebuilt macOS arm64 package
-
-Download `poki-v0.1.1-macos-arm64.tar.gz` from the release and run:
-
-```sh
-tar -xzf poki-v0.1.1-macos-arm64.tar.gz
-cd poki-v0.1.1
-npm ci --no-audit --no-fund
-npm start
+```powershell
+node bin/prepare-device.mjs      # checks Developer Mode, installs the developer disk image
+npm start                        # keep this running
+node bin/call.mjs list_devices   # in a second window
 ```
 
-The package includes the native bridge and idevice tools. You do not need Rust or `./bin/setup`. You still need macOS on Apple Silicon, full Xcode, Node.js 24+, Python 3, and ffmpeg. Register your MCP client and install the optional Agent as described below.
+Register the server with your client, for example Claude Code:
 
-In another terminal, from the same directory, register the MCP server:
-
-```sh
-claude mcp add --scope user poki-mcp -- node "$PWD/src/stdio.mjs"   # Claude Code
-codex mcp add poki-mcp -- node "$PWD/src/stdio.mjs"                 # Codex
+```powershell
+claude mcp add --scope user poki-mcp -- node "$PWD\src\stdio.mjs"
 ```
 
-**Poki Agent.** For Poki's standalone terminal agent or messaging channels, keep `npm start` running and open another terminal in the same directory. Install the agent, add its command to this terminal's path, and sign in:
+The full walkthrough, Wi-Fi setup included, is in [docs/windows.md](docs/windows.md).
 
-```sh
-npm ci --prefix agent
-export PATH="$PWD/bin:$PATH"
-poki login
-poki status
-```
+## What was tested
 
-Poki Agent uses GPT-6.1 Terra (`gpt-6.1-terra`) with low reasoning by default. We recommend keeping it: it is the fastest setup we have tested for phone tasks. Override it with `POKI_AGENT_MODEL`; see [Run Poki Agent](agent/README.md).
+All numbers below come from one Windows 11 PC (Intel Core Ultra 9) and one iPhone 16 Pro Max (iPhone17,2) on iOS 27.0.1. A different phone, iOS version, or network will give different timings.
 
-For a physical iPhone, pair it with your Mac over USB first. See [Physical iPhone setup](docs/physical-iphone.md).
-
-Update with `./bin/poki update`. Set `POKI_NO_UPDATE_CHECK=1` to disable the daily anonymous GitHub release check. See [Update](AGENTS.md#update) for the request URL, restart steps, and prebuilt packages.
-
-## Try a task
-
-With Poki Agent, one connected iPhone is selected automatically. With multiple devices, add `--device '<device UUID>'`.
-
-```sh
-node bin/call.mjs list_devices   # Find your device UUID
-poki "Search esp32 in Chrome and summarize the top result"
-```
-
-> **Note:** Poki controls your real iPhone. If you ask it to send messages or make payments, it will. Screen contents are sent to your configured model service.
-
-Gets faster with use: Poki Agent remembers past tasks and runs them faster on repeat.
-
-**Channels:** After configuring an authorized channel, start it with `poki imessage` or `poki telegram`. See [Poki Agent](agent/README.md) for setup.
-
-**MCP clients:** Claude Code, Codex, and any client supporting `mcpServers` JSON.
-
-Physical iPhone support has been verified only on iPhones using the Chinese interface. Physical devices support portrait orientation only. App container export and direct links to Settings subpages are unavailable. See [verification and known limits](docs/verification.md).
-
-## Docs
-
-| Topic | Read |
+| What | Result |
 | --- | --- |
-| Installation, other MCP clients, and troubleshooting | [Install guide](docs/install.md) |
-| Poki Agent, models, iMessage, and Telegram | [Run Poki Agent](agent/README.md) |
-| MCP tool reference | [Tool behavior](docs/tools.md) |
-| Environment variables and sessions | [Configuration](docs/configuration.md) |
-| USB pairing, Developer Mode, and Wi-Fi | [Physical iPhone setup](docs/physical-iphone.md) |
-| Test results, known limits, and disclaimers | [Verification](docs/verification.md) |
-| Bridge architecture | [Native bridge](native/NATIVE.md) and [simulator adapter](native/simulator.md) |
-| Roadmap | [poki.bot](https://poki.bot) |
+| `npm test` | 136 tests: 90 pass, 0 fail, 46 skipped. Every skip names its reason; 35 need the iOS Simulator, which only Xcode provides. |
+| OCR, one 1320×2868 screenshot | 202 ms, 7 of 7 test strings read correctly (PP-OCRv6 on DirectML). Windows' built-in OCR took 203 ms and got 5 of 7. |
+| `take_screenshot` over USB | 1282 ms, OCR included |
+| `list_elements` over USB | 1637 ms from accessibility, 407 ms from OCR when accessibility is empty |
+| `tap` over Wi-Fi (phone hotspot) | 6.4 to 7.0 s; 5 of 5 taps delivered |
+| `take_screenshot` / `list_elements` over Wi-Fi | 5.7 s / 2.8 s, cold |
 
-## Roadmap
+Where a 6.4 s tap goes: 1.7 s is the touch itself (opening the media session, a fixed one-second warm-up, the touch), and about 3.9 s is reading the screen before and after to confirm what changed. Pass `verify: false` to `tap`, `tap_text`, `swipe`, `scroll` or `batch_commands` to skip that check when you don't need it. The saving has not been timed on the phone yet.
 
-<p align="center">
-  <img src="docs/images/roadmap.png" width="860" alt="Poki roadmap. Shipped: Poki MCP, Poki Agent, iMessage and Terminal integrations, self-learning routes. In Progress: remote connections (no shared LAN required), Telegram integration, native text input (clipboard-free), persistent connection performance improvements, simplified tool interface. Planned: Poki App, which runs locally on iPhone and is available while your Mac is powered off. Future: iPhone Duo support, physical device support (no Xcode required), additional model providers.">
-</p>
+From a real task log: setting up an iOS Shortcuts automation took 38 UI steps, and 30 went through. Of the 8 that failed, 3 were the service being restarted underneath the task, 2 were taps over Wi-Fi before the audio fix below, 1 was another app holding the microphone, 1 was a `tap_text` that gave up before OCR finished (its time limit has been fixed since), and 1 reported an error after the text had been typed.
 
-## Star History
+## Known limits
 
-<a href="https://www.star-history.com/?repos=JosssphZhou%2Fpoki&type=date&legend=top-left">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=JosssphZhou/poki&type=date&theme=dark&legend=top-left">
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=JosssphZhou/poki&type=date&legend=top-left">
-    <img alt="Star History chart" src="https://api.star-history.com/chart?repos=JosssphZhou/poki&type=date&legend=top-left">
-  </picture>
-</a>
+- Over Wi-Fi the five test taps were on a static title, so they prove delivery, not that a control reacted. A tap that changes the screen has not been timed over the network.
+- Any input fails with CoreDevice error 9022 while another app on the phone holds the microphone (a call, a voice note, a voice assistant). Free the microphone and it works again.
+- Poki's resident helper, which keeps one media session per device, listens on a Unix socket and does not build on Windows. Every input here opens its own session and waits one second.
+- `start_simulator`, `shut_down_simulator`, `build_and_run`, `download_app_container` and `open_url` need Xcode and are not offered. Crash reports are listed but not symbolicated.
+- The developer disk image comes from pymobiledevice3's downloader, or from a Mac whose Xcode matches the phone's iOS version (`POKI_DDI_DIR`).
+- Not tested on macOS. This fork builds the bridge with the `rustcrypto` TLS backend on every platform.
 
-## Contributors
+## Relationship to Poki
 
-<a href="https://github.com/JosssphZhou/poki/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=JosssphZhou/poki" alt="Contributors">
-</a>
+Poki is written by [Joseph Zhou](https://github.com/JosssphZhou) and contributors. This repository keeps its history and its AGPL-3.0-only license, and adds the Windows port on top of v0.1.1. The upstream README is kept as [README.poki.md](README.poki.md), and the port's design notes are in [docs/windows.md](docs/windows.md).
 
-## Disclaimer
-
-Poki is an independent open source project. It is not affiliated with, or endorsed by, Apple, OpenAI, or the makers of any app or website it operates. iPhone is a trademark of Apple Inc.
-
-Automating third-party apps and websites may violate their terms of service. Decide for yourself whether to use Poki with a given service. You are responsible for what it does on your device and accounts, including messages it sends, changes it makes, and any account restrictions that result.
-
-Poki is provided "as is", without warranty, as set out in the AGPL-3.0 license.
-
-## License
-
-Poki is open source under the [AGPL-3.0-only license](LICENSE).
-
-Copyright (c) 2026 Joseph Zhou and contributors. Open-source dependencies retain their respective licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). To contribute, see [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Acknowledgments
-
-<p align="center">
-  <img src="docs/images/acknowledgments.png" width="860" alt="Built on open source: pi, idevice, idb, BlueBubbles, Hermes Agent, MCP SDK, sharp, and FFmpeg"><br>
-  <sub>Open source acknowledgments: <a href="https://github.com/earendil-works/pi">pi</a> | <a href="https://github.com/jkcoxson/idevice">idevice</a> | <a href="https://github.com/facebook/idb">idb</a> | <a href="https://github.com/BlueBubblesApp/bluebubbles-server">BlueBubbles</a> | <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> | <a href="https://github.com/modelcontextprotocol/typescript-sdk">MCP SDK</a> | <a href="https://github.com/lovell/sharp">sharp</a> | <a href="https://github.com/FFmpeg/FFmpeg">FFmpeg</a></sub>
-</p>
+Problems that only happen on Windows belong here. Problems you can reproduce on a Mac belong upstream.
