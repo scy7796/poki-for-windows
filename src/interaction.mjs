@@ -102,7 +102,7 @@ const sameField = (a, b) => (a.object_id ?? fieldKey(a)) === (b.object_id ?? fie
 // The five seconds cover all of it, and a read still running when they end is stopped: coordinates
 // that were not confirmed in time are not worth sending input to. A target that `mustHold` selects
 // takes two matching reads even on a quiet screen.
-async function locate(ctx, find, describe, mustHold) {
+async function locate(ctx, find, describe, mustHold, verify = true) {
   let previous, seen = { elements: [] }, last = [];
   try {
     return await deadline(patienceMs, async () => {
@@ -110,7 +110,7 @@ async function locate(ctx, find, describe, mustHold) {
       let nextOcr = ocrAfterMs;
       for (let attempt = 0; ; attempt++) {
         checkWork();
-        seen = await readStructure(ctx, attempt === 0 ? justReadMs : 0);
+        seen = await readStructure(ctx, verify && attempt === 0 ? justReadMs : 0);
         checkWork();
         let found = find(seen.elements);
         const elapsed = performance.now() - started, quiet = performance.now() - ctx.lastInputAt > quietMs;
@@ -124,7 +124,7 @@ async function locate(ctx, find, describe, mustHold) {
         last = found;
         const position = found.map(place).join(';');
         // Right after input the screen may still be sliding, so a target has to hold its place across two reads.
-        if (found.length && (position === previous || attempt === 0 && quiet && !mustHold?.(found))) {
+        if (found.length && (!verify || position === previous || attempt === 0 && quiet && !mustHold?.(found))) {
           if (found.length > 1) throw new Error(describe.many(found));
           return found[0];
         }
@@ -157,12 +157,12 @@ const describeElement = element => {
 // What the screen shows once it has stopped changing: a list still coasting after a scroll would
 // otherwise report a position it is about to leave. `compared` is false when accessibility could not
 // read it, because OCR text alone cannot say whether anything moved.
-export async function readScreen(ctx) {
+export async function readScreen(ctx, { once = false } = {}) {
   await ctx.settle();
   const started = performance.now();
   // A batch that ends on a touch has just read the screen to see whether it changed.
-  let seen = await readStructure(ctx, justReadMs);
-  while (performance.now() - started < stableWithinMs) {
+  let seen = await readStructure(ctx, once ? 0 : justReadMs);
+  while (!once && performance.now() - started < stableWithinMs) {
     await pause(pollMs);
     const next = await readStructure(ctx, 0);
     const same = next.signature === seen.signature;
@@ -236,7 +236,7 @@ export async function interaction(ctx, name, args) {
   switch (name) {
     case 'tap': case 'double_tap': case 'long_press': return tap(args, name);
     case 'tap_text': {
-      const element = await locate(ctx, elements => matching(elements, args.text, args.exact), { missing: seen => missingText(args.text, seen), many: found => tooMany(args.text, found) });
+      const element = await locate(ctx, elements => matching(elements, args.text, args.exact), { missing: seen => missingText(args.text, seen), many: found => tooMany(args.text, found) }, undefined, args.verify !== false);
       return ctx.input({ op: 'tap', ...center(element), duration_ms: 50 });
     }
     case 'swipe': case 'drag': return ctx.input({

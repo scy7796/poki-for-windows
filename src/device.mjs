@@ -366,9 +366,9 @@ export class Devices {
   }
   // Reading the result back saves the caller a round trip to look. The action has already happened,
   // so a failed read only loses the report; a stop request still surfaces as a stop.
-  async readback(before) {
+  async readback(before, options) {
     try {
-      const { signature, screen } = await deadline(readbackMs, () => readScreen(this));
+      const { signature, screen } = await deadline(readbackMs, () => readScreen(this, options));
       const compared = before !== undefined && signature !== undefined;
       return { screen, screen_change_verified: compared, ...(compared ? { screen_changed: signature !== before } : {}) };
     } catch (error) {
@@ -533,7 +533,8 @@ export class Devices {
         // Without await, the finally below restores the device state while the first step is still looking up its device.
         case 'batch_commands': return await runBatch(this, args);
         default: {
-          const looks = reportsScreen.has(name) && !this.inBatch, touches = touchesControl.has(name);
+          const verify = args.verify !== false;
+          const looks = verify && reportsScreen.has(name) && !this.inBatch, touches = verify && touchesControl.has(name);
           this.beforeInput = undefined;
           // A batch step may reuse the read its predecessor just took of the same screen.
           const before = looks || touches ? await this.readBefore(this.inBatch ? justReadMs : 0) : undefined;
@@ -544,6 +545,7 @@ export class Devices {
           const sentTo = this.beforeInput ?? before, signature = sentTo?.elements.length ? sentTo.signature : undefined;
           if (looks && delivered) result = { ...result, ...await this.readback(signature) };
           else if (touches && delivered && signature !== undefined) result = { ...result, ...await this.changedSince(signature) };
+          if (!verify) result = { ...result, verified: false };
           const unchanged = touches && result.screen_changed === false && !result.stopped;
           if (unchanged) result = { ...result, instruction: unchangedAdvice };
           // The input layers always answer false here. Only a touch is compared inside a batch; the batch ends with the screen.

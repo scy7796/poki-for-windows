@@ -71,6 +71,16 @@ Three tools handle most interactions:
 
 Installing apps, opening URLs, and reading the clipboard trigger a macOS approval dialog on your Mac. See [Approval & Clipboard Behavior](#approval--clipboard-behavior).
 
+## Optional action verification
+
+`tap`, `tap_text`, `swipe`, and `scroll` accept `verify: false`. These calls omit the reads that compare the screen before and after an action. Their results include `verified: false` and do not confirm that the app accepted the input. Omitting `verify`, or setting it to `true`, keeps the default verification.
+
+`tap_text` still reads the current screen to locate its target. With verification disabled, it uses the first matching position without waiting for two stable positions. Coordinate actions still obtain the current display dimensions. This option does not promise a call with no device reads.
+
+`batch_commands` also accepts `verify: false`. Supported steps inherit that value, and a step can override it with `arguments.verify: true`. A batch with unverified steps reads the final screen once. That snapshot does not verify each preceding action. An unknown input outcome still stops the batch, including with `stop_on_error: false`.
+
+Accessibility can miss changes that affect only pixels, such as Calculator's display after AC. Default batches can still stop with `no_change` in that case. An unverified tap does not produce `no_change`; inspect the final screenshot before reporting the task result.
+
 ## All MCP tools
 
 | Group | Tool | What it does |

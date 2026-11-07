@@ -948,3 +948,54 @@ test('application names reuse a per-device directory across sessions and refresh
   assert.ok(!refreshed.isError,JSON.stringify(refreshed));assert.equal(refreshed._meta.app_lookup.cache_hit,false);
  }
 });
+
+test('verify:false omits action verification and batches observe once after all inputs', async t => {
+ const f=await fixture(t);
+ for(const [tool,args,inputOp,locationReads] of [
+  ['tap',{x:10,y:10},'tap',0],
+  ['swipe',{from_x:10,from_y:10,to_x:20,to_y:20},'drag',0],
+  ['scroll',{direction:'down'},'drag',0],
+  ['tap_text',{text:'First'},'tap',1],
+ ]) {
+  const before=(await f.events()).length;
+  const result=await f.call(tool,{...args,verify:false}),receipt=value(result);
+  assert.notEqual(result.isError,true,JSON.stringify(result));
+  assert.equal(receipt.sent,true,tool);
+  assert.equal(receipt.verified,false,tool);
+  assert.equal(receipt.screen,undefined,tool);
+  assert.equal(receipt.screen_changed,undefined,tool);
+  const events=(await f.events()).slice(before);
+  assert.equal(events.filter(event=>event.op===inputOp).length,1,tool);
+  assert.equal(events.filter(event=>event.op==='ax_tree').length,locationReads,tool);
+  assert.equal(events.filter(event=>event.tool==='ocr').length,0,tool);
+ }
+ const before=(await f.events()).length;
+ const result=await f.call('batch_commands',{verify:false,commands:[
+  {tool:'tap',arguments:{x:10,y:10}},
+  {tool:'tap',arguments:{x:10,y:10}},
+ ]});
+ assert.notEqual(result.isError,true,JSON.stringify(result));
+ const summary=summaryOf(result);
+ assert.equal(summary.completed_steps,2);
+ assert.equal(summary.stop_reason,null);
+ assert.equal(summary.verified,false);
+ assert.ok(summary.screen.text.includes('Button: First'));
+ const operations=(await f.events()).slice(before).filter(event=>event.op).map(event=>event.op);
+ assert.deepEqual(operations,['tap','tap','ax_tree']);
+ await f.set({inputError:true});
+ const failedBefore=(await f.events()).length;
+ const failed=await f.call('batch_commands',{verify:false,stop_on_error:false,commands:[
+  {tool:'tap',arguments:{x:10,y:10}},
+  {tool:'tap',arguments:{x:10,y:10}},
+ ]});
+ assert.equal(failed.isError,true);
+ assert.equal(summaryOf(failed).stop_reason,'unknown');
+ assert.equal((await f.events()).slice(failedBefore).filter(event=>event.op==='tap').length,1,'Unknown input must not be replayed or followed by another input');
+ await f.set({});
+ const overridden=await f.call('batch_commands',{verify:false,commands:[
+  {tool:'tap',arguments:{x:10,y:10,verify:true}},
+  {tool:'tap',arguments:{x:10,y:10}},
+ ]});
+ assert.equal(summaryOf(overridden).stop_reason,'no_change');
+ assert.equal(summaryOf(overridden).completed_steps,1);
+});
