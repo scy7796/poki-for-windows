@@ -4,18 +4,18 @@ These steps are for an agent installing this repository on a Windows 11 PC. Run 
 
 This installs Poki MCP for the client you are running in (Claude Code, Codex, or another MCP client), using the user's existing subscription. Poki Agent, Poki's own terminal agent with iMessage and Telegram channels, has not been tested on Windows; skip it unless the user asks, and say it is untested if they do.
 
-1. **Check prerequisites.** Check each of these and report every one that is missing with its install hint before going on:
+1. **Check prerequisites.** Check each of these. List every missing one with its install command, ask the user once whether you may run those commands, and run them on their yes:
 
    | Tool | Check | Install hint |
    | --- | --- | --- |
    | Git | `git --version` | `winget install Git.Git` |
    | Node.js 24+ | `node -v` | `winget install OpenJS.NodeJS` |
-   | Python 3.11+ | `python -V` | `winget install Python.Python.3.12` (call `python`, not `python3`, which on many PCs is a Store placeholder) |
+   | Python 3.11+ (3.12 recommended) | `python -V` | `winget install Python.Python.3.12`. If `python -V` prints nothing or opens the Microsoft Store, that is Windows' placeholder alias, not Python. Call `python`, not `python3`. |
    | Rust | `cargo -V` | `winget install Rustlang.Rustup`, then open a new terminal |
-   | ffmpeg | `ffmpeg -version` | `winget install Gyan.FFmpeg` |
+   | ffmpeg (optional) | `ffmpeg -version` | `winget install Gyan.FFmpeg`. Only screen recording needs it. |
    | Apple Devices | `Get-AppxPackage AppleInc.AppleDevices` | Microsoft Store, "Apple Devices" |
 
-   **STOP if Apple Devices is missing.** Installing a Store app needs the user. A newly installed tool may need a new terminal before it is on `PATH`.
+   **STOP if Apple Devices is missing.** Installing a Store app needs the user. A newly installed tool may need a new terminal before it is on `PATH`. Python 3.13 and newer work for everything except the `winsdk` fallback in step 3.
 
 2. **Clone and build.** Use the repository URL the user gave, or `https://github.com/scy7796/poki-for-windows.git`. Clone into a new directory and enter it; if you are already in the intended checkout, use it. Run:
 
@@ -23,21 +23,27 @@ This installs Poki MCP for the client you are running in (Claude Code, Codex, or
    ./bin/setup.ps1
    ```
 
-   It clones the pinned `idevice` dependency into `.deps\idevice`, switches its TLS backend to `rustcrypto` there (it prints "patched ... Cargo.toml"; `.deps` is ignored by git, so this repository's files stay untouched), builds `idevice-tools.exe` and the bridge `build\poki-native.exe`, and runs `npm ci`. It needs access to GitHub, crates.io and npm. A first build took under two minutes in testing. Continue only when it exits without an error.
+   It clones the pinned `idevice` dependency into `.deps\idevice`, switches its TLS backend to `rustcrypto` there (it prints "patched ... Cargo.toml"; `.deps` is ignored by git, so this repository's files stay untouched), builds `idevice-tools.exe` and the bridge `build\poki-native.exe`, and runs `npm ci`. It needs access to GitHub, crates.io and npm. The first build compiles about 400 crates: under two minutes on a fast desktop, longer on a laptop. Continue only when it exits without an error.
 
    If it fails:
 
-   - `LNK1104: cannot open file 'msvcrt.lib'`: the MSVC C++ workload is missing. Run `rustup default stable-x86_64-pc-windows-gnu` and run setup again.
+   - `linker 'link.exe' not found`, or `LNK1104: cannot open file 'msvcrt.lib'`: Rust's default Windows toolchain wants Visual Studio's C++ build tools. Switch to the GNU toolchain, which brings its own linker: `rustup default stable-x86_64-pc-windows-gnu`, then run setup again.
+   - `'python' does not run Python`: the Store alias is first on `PATH`. Install Python as in step 1 and open a new terminal.
    - PowerShell refuses to run the script: run `powershell -ExecutionPolicy Bypass -File bin/setup.ps1` for this one call instead of changing the user's policy.
-   - A clone or `npm ci` fails on the network: report the error and ask the user to check their connection or proxy, then run setup again. Setup can be rerun safely.
+   - A clone or `npm ci` fails on the network: report the error and ask the user to check their connection or proxy, then run setup again. Setup can be rerun safely while the service is stopped.
 
 3. **Install the Python packages.** These give Poki its OCR and its developer-disk-image downloader:
 
    ```powershell
-   python -m pip install rapidocr onnxruntime-directml winsdk pymobiledevice3
+   python -m pip install --upgrade rapidocr onnxruntime-directml pymobiledevice3
+   python native/ocr_win.py docs/images/poki-icon.png
    ```
 
-   `onnxruntime-directml` runs OCR on the GPU. If it will not install, use `onnxruntime` instead; OCR then works on the CPU, about five times slower.
+   The second line runs OCR once on an image from this repository. The first run downloads two small models (about 6 MB) from modelscope.cn; if it fails there, report the error, since OCR on the phone will fail the same way. It prints JSON, possibly an empty list, when it works.
+
+   `onnxruntime-directml` runs OCR on the GPU, and falls back to the CPU by itself on a PC without a DirectX 12 GPU. If it will not install, use `onnxruntime` instead; OCR then runs on the CPU, about five times slower.
+
+   Optional, Python 3.11 or 3.12 only: `python -m pip install winsdk` adds Windows' built-in OCR as a second engine, used only when the first one cannot load. It reads only the languages installed for the Windows user.
 
 4. **Start the service in the background.** First check whether one is already running: if `node bin/call.mjs poki_mcp_status` answers, use that service and skip to step 5. Otherwise start it hidden, with its output in a private log:
 
@@ -112,6 +118,6 @@ This installs Poki MCP for the client you are running in (Claude Code, Codex, or
 
 ## Update
 
-When the user asks to update, run `git pull --ff-only` in the checkout, then `./bin/setup.ps1`. If the pull stops because of local changes, report them and leave them alone: do not reset, stash, or switch branches for the user. Tell the user to stop the running service (end the `node` process running `src/daemon.mjs`) and start it again as in step 4. Then run `node bin/call.mjs poki_mcp_status`.
+When the user asks to update, run `git pull --ff-only` in the checkout. If the pull stops because of local changes, report them and leave them alone: do not reset, stash, or switch branches for the user. Then stop the service before building, because Windows will not let `npm ci` replace files a running process has loaded: ask the user before ending the `node` process running `src/daemon.mjs` from this checkout. Run `./bin/setup.ps1`, start the service as in step 4, and run `node bin/call.mjs poki_mcp_status`.
 
 `bin/update.mjs` has a Windows branch that runs `bin/setup.ps1` through `pwsh` (PowerShell 7), which is not installed on every PC and has not been tested here; prefer the steps above.

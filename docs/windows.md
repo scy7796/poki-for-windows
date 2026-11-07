@@ -163,7 +163,7 @@ the platform directly.
 | `src/platform.mjs` | Simulator inventory, `devicectl`, `ditto`, `plutil`, `xcodebuild`, `atos` and app containers are gated; `.ipa` work uses `tar` and `src/plist.mjs`; `terminate_app` uses `app_service processes`/`signal`; crashes use `crash_logs`. |
 | `src/recording.mjs` | Media directory per platform, owned spawns, `killTree`. |
 | `src/human.mjs` | The approval dialog is a `WScript.Shell` message box on Windows instead of `osascript`. |
-| `src/tools.mjs` | `start_simulator`, `shut_down_simulator`, `build_and_run` and `download_app_container` are not listed where Xcode does not exist, so the catalog is 52 tools instead of 56. |
+| `src/tools.mjs` | `start_simulator`, `shut_down_simulator`, `build_and_run`, `download_app_container` and `open_url` are not listed where Xcode does not exist, so the catalog is 53 tools instead of 58. |
 | `src/daemon.mjs` | Also stops on `SIGHUP`, `SIGBREAK` and `SIGQUIT`; Windows delivers no `SIGTERM` to a console process. |
 | `src/build-info.mjs` | Tracks the bridge by its real per-platform name. |
 | `bin/build-native.mjs` | New. Cross-platform replacement for `bin/build-native`. |
@@ -234,7 +234,8 @@ stop gaining detail), and 736 loses a row: 976 ms and 6 of 7 there, 1083 ms and 
 960, 1500 ms and 7 of 7 at 1600.
 
 ```powershell
-python -m pip install winsdk rapidocr onnxruntime-directml --index-url https://pypi.org/simple
+python -m pip install rapidocr onnxruntime-directml --index-url https://pypi.org/simple
+# Optional, Python 3.11 or 3.12 only: winsdk adds the Windows.Media.Ocr fallback.
 # Without onnxruntime-directml the same model still works on the CPU, about five times slower.
 $env:POKI_OCR_ENGINE = 'rapidocr'    # or 'windows', or 'auto' (default)
 ```
@@ -250,7 +251,7 @@ original**, and that is where `窦` had been read as `室`.
 ### Choosing an engine by hand
 
 ```powershell
-python -m pip install winsdk rapidocr --index-url https://pypi.org/simple
+python -m pip install winsdk rapidocr --index-url https://pypi.org/simple   # winsdk: Python 3.11 or 3.12 only
 $env:POKI_OCR_ENGINE = 'windows'    # or 'rapidocr'
 ```
 

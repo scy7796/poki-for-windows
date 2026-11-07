@@ -9,7 +9,10 @@ import { version } from './build-info.mjs';
 
 const day = 24 * 60 * 60 * 1000;
 const stateFile = join(stateDir, 'update-check.json');
-const endpoint = 'https://api.github.com/repos/JosssphZhou/poki/releases/latest';
+// This port has its own releases; upstream's would point Windows users at a macOS build.
+const repo = 'scy7796/poki-for-windows';
+const endpoint = `https://api.github.com/repos/${repo}/releases/latest`;
+const updateCommand = 'git pull --ff-only, then ./bin/setup.ps1';
 let pending;
 let state;
 
@@ -25,7 +28,7 @@ function notice(release) {
   if (difference < 0 || (difference === 0 && !current.prerelease)) return;
   const firstLine = String(release.body ?? '').split(/\r?\n/).map(line => line.trim()).find(line => line && !/^#{1,6}\s/.test(line)) ?? '';
   const summary = firstLine.replace(/^[-*+]\s+/, '').replace(/[\x00-\x1f\x7f-\x9f]/g, '').match(/^.*?[.!?](?:\s|$)|^.+$/)?.[0].trim() ?? '';
-  return { version: latest.numbers.join('.'), summary: summary.slice(0, 300), url: `https://github.com/JosssphZhou/poki/releases/tag/${encodeURIComponent(release.tag_name)}`, command: 'poki update' };
+  return { version: latest.numbers.join('.'), summary: summary.slice(0, 300), url: `https://github.com/${repo}/releases/tag/${encodeURIComponent(release.tag_name)}`, command: updateCommand };
 }
 
 async function checkForUpdate() {

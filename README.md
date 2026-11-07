@@ -36,7 +36,7 @@ You need Windows 11, Git, Node.js 24+, Python 3.11+, Rust (rustup), ffmpeg, and 
 git clone https://github.com/scy7796/poki-for-windows.git
 cd poki-for-windows
 ./bin/setup.ps1
-python -m pip install rapidocr onnxruntime-directml winsdk pymobiledevice3
+python -m pip install --upgrade rapidocr onnxruntime-directml pymobiledevice3
 ```
 
 Open the Apple Devices app (it runs the USB service on `127.0.0.1:27015`), plug in the iPhone, unlock it and tap Trust. Then:
@@ -80,6 +80,13 @@ From a real task log: setting up an iOS Shortcuts automation took 38 UI steps, a
 - `start_simulator`, `shut_down_simulator`, `build_and_run`, `download_app_container` and `open_url` need Xcode and are not offered. Crash reports are listed but not symbolicated.
 - The developer disk image comes from pymobiledevice3's downloader, or from a Mac whose Xcode matches the phone's iOS version (`POKI_DDI_DIR`).
 - Not tested on macOS. This fork builds the bridge with the `rustcrypto` TLS backend on every platform.
+
+## Privacy
+
+- The service listens on `127.0.0.1` only, and every request needs the token in `%LOCALAPPDATA%\PokiMCP\mcp.json`. That folder also holds the Wi-Fi pairing records and recent frames. Treat it like a password.
+- Poki sends screenshots, screen text and the accessibility tree to your MCP client when the agent calls a tool. From there they go to whichever model your client uses, so anything on the phone screen, notifications and verification codes included, can reach that provider. Poki itself uploads them nowhere.
+- Saved screenshots go to `Pictures\Poki MCP` unless a tool call names another path.
+- Network use: setup downloads from GitHub, crates.io and npm; the first OCR run downloads its models from modelscope.cn; pymobiledevice3 downloads Apple's developer disk image. Once a day the service asks GitHub's API, without credentials, for this repository's latest release. Set `POKI_NO_UPDATE_CHECK=1` to turn that off.
 
 ## Relationship to Poki
 

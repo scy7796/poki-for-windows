@@ -104,7 +104,14 @@ def rapidocr(path):
             }
             if directml_available():
                 params['EngineConfig.onnxruntime.use_dml'] = True
-            _engines['rapidocr'] = ('v3', RapidOCR(params=params))
+            try:
+                engine = RapidOCR(params=params)
+            except Exception:
+                # DirectML is installed but this PC has no usable DirectX 12 GPU: use the CPU.
+                if not params.pop('EngineConfig.onnxruntime.use_dml', False):
+                    raise
+                engine = RapidOCR(params=params)
+            _engines['rapidocr'] = ('v3', engine)
         except ImportError:
             from rapidocr_onnxruntime import RapidOCR
             _engines['rapidocr'] = ('v1', RapidOCR())

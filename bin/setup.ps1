@@ -32,12 +32,16 @@ Step 'Checking prerequisites'
 Need git 'Install Git for Windows.'
 Need node 'Install Node.js 24 or newer.'
 Need cargo 'Install Rust with rustup, then reopen this window.'
-Need python 'Install Python 3.11 or newer and add it to PATH.'
-Need ffmpeg 'Run: winget install Gyan.FFmpeg'
+Need python 'Install Python 3.12 and add it to PATH.'
+# The Microsoft Store alias passes Get-Command but runs nothing, so ask Python itself.
+$pyVersion = & python -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>$null
+if ($LASTEXITCODE -ne 0 -or -not $pyVersion) { throw "'python' does not run Python; it is probably the Microsoft Store alias. Run: winget install Python.Python.3.12, then open a new window." }
+if ([version]$pyVersion -lt [version]'3.11') { throw "Python 3.11 or newer is required; found $pyVersion." }
+if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { Write-Host 'ffmpeg not found: everything works except screen recording. To add it: winget install Gyan.FFmpeg' }
 
 $nodeMajor = [int](& node -p "process.versions.node.split('.')[0]")
 if ($nodeMajor -lt 24) { throw "Node.js 24 or newer is required; found $(& node -v)." }
-Write-Host "git, node $(& node -v), cargo $(& cargo -V), python $(& python -V), ffmpeg present"
+Write-Host "git, node $(& node -v), cargo $(& cargo -V), python $pyVersion"
 
 $crypto = 'rustcrypto'
 Step "Fetching the pinned idevice dependency (TLS backend: $crypto)"

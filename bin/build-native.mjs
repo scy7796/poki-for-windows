@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { root } from '../src/config.mjs';
-import { exe, isMac, isWin } from '../src/os.mjs';
+import { exe, isMac, isWin, python } from '../src/os.mjs';
 
 const run = (file, args, options = {}) => {
   const result = spawnSync(file, args, { stdio: 'inherit', ...options });
@@ -34,7 +34,7 @@ const built = join('build/native-target', 'release', exe('poki-native'));
 copyFileSync(built, join('build', exe('poki-native')));
 if (isWin) {
   // The OCR helper needs an interpreter and its engines, not a compile step.
-  const engines = spawnSync('python', ['-c', 'import rapidocr, onnxruntime'], { stdio: 'ignore' });
-  if (engines.status !== 0) console.error('Warning: native/ocr_win.py has no OCR engine yet. Run: pip install winsdk rapidocr onnxruntime-directml');
+  const engines = spawnSync(python, ['-c', 'import rapidocr, onnxruntime'], { stdio: 'ignore' });
+  if (engines.status !== 0) console.error('Warning: native/ocr_win.py has no OCR engine yet. Run: python -m pip install rapidocr onnxruntime-directml');
 }
 console.log(`Built build/${exe('poki-native')}${isMac ? ', build/ocr and build/simulator' : ''}.`);

@@ -9,7 +9,7 @@ import { root } from '../src/config.mjs';
 import { fixture, value } from './fixture.mjs';
 
 const exec = promisify(execFile);
-const release = { tag_name: 'v0.2.0', body: 'Updates are now available. More details follow.', html_url: 'https://github.com/JosssphZhou/poki/releases/tag/v0.2.0', draft: false, prerelease: false };
+const release = { tag_name: 'v0.2.0', body: 'Updates are now available. More details follow.', html_url: 'https://github.com/scy7796/poki-for-windows/releases/tag/v0.2.0', draft: false, prerelease: false };
 async function cli(dir, args, env = {}) {
   try { return { code: 0, ...await exec(join(dir, 'bin/poki'), args, { cwd: dir, env: { ...process.env, POKI_MCP_STATE_DIR: join(dir, 'state'), ...env } }) }; }
   catch (error) { return { code: error.code, stdout: error.stdout, stderr: error.stderr }; }
@@ -30,23 +30,23 @@ test('MCP and CLI expose releases, honor opt-out and stay quiet offline', { skip
       await mkdir(join(dir, 'state'));
       if (scenario === 'cached') await writeFile(join(dir, 'state/update-check.json'), JSON.stringify({ checkedAt: Date.now(), release }));
       const daemon = join(dir, 'src/daemon.mjs');
-      await writeFile(daemon, `${scenario === 'default' ? '' : `process.env.POKI_NO_UPDATE_CHECK = '${scenario === 'disabled' ? '1' : ''}';\n`}const originalFetch = globalThis.fetch;\nglobalThis.fetch = async (url, options) => {\n if (String(url) !== 'https://api.github.com/repos/JosssphZhou/poki/releases/latest') return originalFetch(url, options);\n await (await import('node:fs/promises')).appendFile(${JSON.stringify(join(dir, 'release-requests'))}, 'request\\n');\n if (options.headers.Authorization || options.headers.authorization) throw Error('Release request must be anonymous');\n ${['offline', 'cached', 'disabled'].includes(scenario) ? "throw Error('Synthetic offline network');" : `return new Response(JSON.stringify(${JSON.stringify(release)}), { status: 200 });`}\n};\n` + await readFile(daemon, 'utf8'));
+      await writeFile(daemon, `${scenario === 'default' ? '' : `process.env.POKI_NO_UPDATE_CHECK = '${scenario === 'disabled' ? '1' : ''}';\n`}const originalFetch = globalThis.fetch;\nglobalThis.fetch = async (url, options) => {\n if (String(url) !== 'https://api.github.com/repos/scy7796/poki-for-windows/releases/latest') return originalFetch(url, options);\n await (await import('node:fs/promises')).appendFile(${JSON.stringify(join(dir, 'release-requests'))}, 'request\\n');\n if (options.headers.Authorization || options.headers.authorization) throw Error('Release request must be anonymous');\n ${['offline', 'cached', 'disabled'].includes(scenario) ? "throw Error('Synthetic offline network');" : `return new Response(JSON.stringify(${JSON.stringify(release)}), { status: 200 });`}\n};\n` + await readFile(daemon, 'utf8'));
       await copyCLI(dir);
     } });
     const result = value(await f.call('poki_mcp_status'));
     const visible = ['older', 'cached'].includes(scenario);
-    if (visible) assert.deepEqual(result.update, { version: '0.2.0', summary: 'Updates are now available.', url: release.html_url, command: 'poki update' });
+    if (visible) assert.deepEqual(result.update, { version: '0.2.0', summary: 'Updates are now available.', url: release.html_url, command: 'git pull --ff-only, then ./bin/setup.ps1' });
     else assert.equal(result.update, undefined);
     if (['cached', 'disabled', 'default'].includes(scenario)) await assert.rejects(readFile(join(f.dir, 'release-requests')), { code: 'ENOENT' });
     if (scenario === 'offline') assert.equal(JSON.parse(await readFile(join(f.dir, 'state/update-check.json'), 'utf8')).release, null);
     const status = await cli(f.dir, ['status'], { ...f.env, POKI_AGENT_AUTH: 'api-key', OPENAI_API_KEY: '', POKI_NO_UPDATE_CHECK: scenario === 'disabled' ? '1' : '' });
     assert.equal(status.code, 0, status.stderr);
-    if (visible) assert.match(status.stdout, /Poki 0\.2\.0 available[\s\S]*Updates are now available\.[\s\S]*releases\/tag\/v0\.2\.0[\s\S]*poki update/);
-    else assert.doesNotMatch(status.stdout, /available|poki update/);
+    if (visible) assert.match(status.stdout, /Poki 0\.2\.0 available[\s\S]*Updates are now available\.[\s\S]*releases\/tag\/v0\.2\.0[\s\S]*bin\/setup\.ps1/);
+    else assert.doesNotMatch(status.stdout, /available|setup\.ps1/);
     t.diagnostic(`$ node bin/call.mjs poki_mcp_status (${scenario}, synthetic release/device)\n${JSON.stringify(result)}\n$ poki status\n${status.stdout}`);
     if (scenario === 'older') {
       const disabled = await cli(f.dir, ['status'], { ...f.env, POKI_AGENT_AUTH: 'api-key', POKI_NO_UPDATE_CHECK: '1' });
-      assert.doesNotMatch(disabled.stdout, /poki update/);
+      assert.doesNotMatch(disabled.stdout, /setup\.ps1/);
     }
   });
 });
