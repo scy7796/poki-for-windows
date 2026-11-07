@@ -779,6 +779,21 @@ for(const [tool,args] of Object.entries(locating)){
   assert.equal(inputSent(await f.events()),false);
  });
 }
+test('a recognition that began inside the five seconds still finishes and is used',async t=>{
+ const f=await fixture(t);await f.set({axEmpty:true,ocrDelayMs:6000});
+ const started=Date.now();
+ const result=await f.call('tap_text',{text:'First'});
+ const elapsed=Date.now()-started;
+ // Nothing new may start after five seconds, but this recognition started at once on a screen
+ // accessibility could not read, so its answer counts even though it arrives later. Six seconds
+ // rather than upstream's eight keeps the bound here meaningful: the resident OCR is not aborted
+ // by the readback deadline, so this call also recognizes the final screen once.
+ assert.ok(!result.isError);
+ assert.ok(elapsed>=5500,'the recognition was not allowed to finish: '+elapsed+'ms');
+ assert.ok(elapsed<18000,'the search outlasted its window: '+elapsed+'ms');
+ assert.equal(inputSent(await f.events()),true);
+});
+
 test('no new look starts after the five seconds, so a late empty read never reaches OCR',async t=>{
  const f=await fixture(t);await f.set({axDelayMs:6000,axEmpty:true});
  const result=await f.call('tap_text',{text:'First'});

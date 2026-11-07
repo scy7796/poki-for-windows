@@ -7,6 +7,9 @@ import { pause, deadline, checkWork, stopped } from './work.mjs';
 export { pause } from './work.mjs';
 export const justReadMs = 500;
 const patienceMs = 5000, ocrAfterMs = 1000, ocrEveryMs = 2000, pollMs = 100, quietMs = 3000, stableWithinMs = 2500, focusWithinMs = 2000, screenTextLimit = 80;
+// Recognizing a phone-sized screen takes seconds on a small host; only a screen accessibility
+// cannot read at all is given this much more time before the search is called off.
+const ocrAllowanceMs = 12000;
 const strings = e => [e.label, e.text, e.value, e.identifier, e.placeholder].filter(v => typeof v === 'string');
 // A recognizer may put a space after every Chinese character it reads, and Windows OCR
 // also does it inside numbers and around punctuation ("微信 ( 714 )"). A caller never
@@ -99,28 +102,42 @@ const sameField = (a, b) => (a.object_id ?? fieldKey(a)) === (b.object_id ?? fie
 
 // Waits for `find` to name one element that has stopped moving. Accessibility is read on every
 // attempt; a screenshot and OCR join in only when it keeps missing, because only OCR sees canvases.
-// The five seconds cover all of it, and a read still running when they end is stopped: coordinates
-// that were not confirmed in time are not worth sending input to. A target that `mustHold` selects
-// takes two matching reads even on a quiet screen.
+// The five seconds cover a readable screen, and nothing new starts after them: coordinates that
+// were not confirmed in time are not worth sending input to. A recognition that began inside them
+// is allowed to finish, because it is the only source a screen accessibility cannot read has and a
+// phone-sized image takes seconds. A target that `mustHold` selects takes two matching reads even
+// on a quiet screen.
 async function locate(ctx, find, describe, mustHold, verify = true) {
   let previous, seen = { elements: [] }, last = [];
   try {
-    return await deadline(patienceMs, async () => {
+    return await deadline(patienceMs + ocrAllowanceMs, async () => {
       const started = performance.now();
-      let nextOcr = ocrAfterMs;
+      let nextOcr = ocrAfterMs, ocrMissing = false;
+      const remaining = () => patienceMs - (performance.now() - started);
       for (let attempt = 0; ; attempt++) {
+        // Nothing new starts after the five seconds. An accessibility read is stopped at that
+        // boundary as it always was; only a recognition that began inside the window is allowed to
+        // run on, because it is the sole source a screen accessibility cannot read has and a
+        // phone-sized image takes seconds.
+        if (attempt && remaining() <= 0) break;
         checkWork();
-        seen = await readStructure(ctx, verify && attempt === 0 ? justReadMs : 0);
+        seen = await deadline(Math.max(1, remaining()), () => readStructure(ctx, verify && attempt === 0 ? justReadMs : 0));
         checkWork();
         let found = find(seen.elements);
         const elapsed = performance.now() - started, quiet = performance.now() - ctx.lastInputAt > quietMs;
-        if (!found.length && (elapsed >= nextOcr || !seen.elements.length && quiet)) {
+        if (!found.length && elapsed < patienceMs && (elapsed >= nextOcr || !seen.elements.length && quiet)) {
           nextOcr = elapsed + ocrEveryMs;
-          seen = { ...seen, ...await ctx.recognize({ source: 'ocr', max_elements: Number.MAX_SAFE_INTEGER }) };
+          // A host without a recognizer still has accessibility: losing OCR narrows the search,
+          // it does not end it.
+          try {
+            seen = { ...seen, ...await ctx.recognize({ source: 'ocr', max_elements: Number.MAX_SAFE_INTEGER }) };
+            found = find(seen.elements);
+            if (found.length) nextOcr = elapsed;
+          } catch (error) { if (stopped(error)) throw error; ocrMissing = true; }
           checkWork();
-          found = find(seen.elements);
-          if (found.length) nextOcr = elapsed;
         }
+        // A readable screen has had its five seconds; a recognizer that already failed gets no more.
+        if (!found.length && (seen.elements.length || ocrMissing) && performance.now() - started >= patienceMs) break;
         last = found;
         const position = found.map(place).join(';');
         // Right after input the screen may still be sliding, so a target has to hold its place across two reads.
@@ -134,6 +151,7 @@ async function locate(ctx, find, describe, mustHold, verify = true) {
         // decides comes after the app has had time to react to the last input.
         await ctx.settle();
       }
+      throw new DOMException('The search window ended without a confirmed target.', 'TimeoutError');
     });
   } catch (error) {
     if (error.name !== 'TimeoutError') throw error;

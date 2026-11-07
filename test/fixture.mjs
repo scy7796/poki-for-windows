@@ -46,6 +46,7 @@ else if(tool==='idevice') {
   for await(const line of createInterface({input:process.stdin})){
    const path=line.trim(); if(!path) continue;
    const now=JSON.parse(readFileSync(process.env.FIXTURE_STATE));
+   if(now.ocrDelayMs)await new Promise(done=>setTimeout(done,now.ocrDelayMs));
    if(now.ocrJunkOnce){writeFileSync(process.env.FIXTURE_STATE,JSON.stringify({...now,ocrJunkOnce:false}));console.log('this line is not a reply');}
    if(now.ocrHangOnce){writeFileSync(process.env.FIXTURE_STATE,JSON.stringify({...now,ocrHangOnce:false}));continue;}
    if(now.ocrUnavailable){console.log(JSON.stringify({path,error:'Text recognition unavailable'}));continue;}
@@ -55,6 +56,7 @@ else if(tool==='idevice') {
   process.exit(0);
  }
  if(state.ocrUnavailable){console.error('Text recognition unavailable');process.exit(1);}
+ if(state.ocrDelayMs)await new Promise(done=>setTimeout(done,state.ocrDelayMs));
  if(state.ocrXs?.length>1)writeFileSync(process.env.FIXTURE_STATE,JSON.stringify({...state,ocrXs:state.ocrXs.slice(1)}));
  console.log(JSON.stringify([{text:state.appearsAfterReads?'Loading':state.ocrLabel??state.label??'First',x:state.ocrXs?.[0]??10,y:10,width:40,height:20}]));
 }
