@@ -54,7 +54,8 @@ Two things about the Rust side on Windows:
 
   `bin/setup.ps1` rewrites `default = ["aws-lc"]` to `["rustcrypto"]` in the pinned
   checkout, and `native/bridge/Cargo.toml` carries `rustcrypto` in its feature list.
-  Nothing else about the dependency is changed.
+  Nothing else about the dependency is changed. The feature list is not per platform, so a
+  macOS build of this port uses `rustcrypto` too; this port has not been built on macOS.
 
 ```powershell
 ./bin/setup.ps1                 # prerequisites, pinned idevice, idevice-tools, npm ci, bridge
@@ -84,6 +85,19 @@ Measured over the iPhone's own hotspot (172.20.10.0/24), cable removed:
 | --- | --- | --- |
 | `take_screenshot` | 5.7 s | includes the RemotePairing tunnel |
 | `list_elements` | 2.8 s | 20 elements, accessibility source |
+| `tap` | 6.7–7.0 s | 5 of 5 sent, over WLAN while USB tethering was also up |
+
+Input over the network needs the display media session, and the phone refused its audio
+half there (`audio startMediaStream failed`), which used to fail every tap. Only the video
+half holds the touch authentication gate open, so a refused audio start is now logged and
+the input goes on; a refused video start still fails the call. Those five taps were on a
+static title, so they show delivery, not that a control reacted; a tap that changes the
+screen has not been timed over the network yet.
+
+The same media session fails with CoreDevice error 9022, "The device microphone or camera
+is currently in use", whenever another app on the phone holds the microphone (a call, a
+voice note, a voice assistant). That is the phone's rule, not the transport's: input
+works again as soon as the microphone is free.
 
 Two things to know when it does not appear:
 
@@ -176,7 +190,9 @@ platforms.
 | `download_app_container` | `devicectl device copy from`, and the `.xcappdata` wrapper plist. |
 | `open_url` | `devicectl device process openURL`. Typing the address into Safari with `type_text` does the same thing. |
 | Crash symbolication | `atos` and `dwarfdump`. Crash reports are still listed and copied. |
-| Wireless devices | The pairing records and mDNS discovery path here are macOS-specific; USB is what was verified. |
+
+Wireless devices are not on this list: they work through RemotePairing as described in
+[Using the phone over the network](#using-the-phone-over-the-network).
 
 ## OCR
 
@@ -268,16 +284,35 @@ list_elements (ocr)       407 ms   of which ocr   7 ms (resident, warm)
 tap                      8038 ms
 ```
 
+Later, over the network, one tap broke down like this (`test/probes/call-stages.mjs`):
+
+```
+tap  wall 6409 ms
+  external_process         76 ms
+  accessibility           940 ms   before the tap
+  screen_capture         1007 ms   display size for the touch
+  input                  1690 ms   media session, the one second warm-up, the touch
+  accessibility           957 ms   after the tap, until two reads agree
+  accessibility          1012 ms
+```
+
+More than half of a tap is checking the screen before and after it. `tap`, `tap_text`,
+`swipe`, `scroll` and `batch_commands` accept `verify: false`, as upstream does, to skip
+that check; a batch then reads the screen once at the end. A coordinate tap still needs
+the display size. The saving has not been timed on a phone yet.
+
 What the rest is, and what does not help:
 
 * **An element read is ~1.1 s of device time**, not host time. `display_info` over the
   same tunnel answers in 124–142 ms warm, so building the CoreDevice tunnel costs about
-  120 ms; the accessibility walk is the device doing the work. A resident bridge would
-  therefore save a few hundred milliseconds per action, not seconds — it is the last
-  thing worth doing, not the first.
+  120 ms; the accessibility walk is the device doing the work.
 * **A tap carries a fixed one second sleep** (`main.rs`, after the media stream opens,
-  so the device is ready for touches). It is in the upstream design and is the same on
-  macOS.
+  so the device is ready for touches), because every input opens a new media session.
+  Upstream since v0.1.1 keeps one helper and one media session per device, so the second
+  costs once (its commit reports `tap_text` going from a median of 8.5 s to 6.1 s). That
+  helper listens on a Unix domain socket and does not build on Windows; a Windows version
+  over the helper's stdio form is the next thing to do here, and it needs phone time to
+  check that the held session does not starve a screen recording.
 * **The `rustcrypto` TLS backend is not in this path.** `CoreDeviceProxy` tunnels
   plain bytes over usbmuxd; the TLS client only matters for remote pairing. Swapping to
   `aws-lc` would not make actions faster, and on this host it cannot be built anyway
@@ -298,13 +333,14 @@ privilege, and the code that watches the bridge edits the launcher's sibling scr
 while touching the launcher so its build marker moves.
 
 ```
-node --test test/protocol.test.mjs      -> 14 pass, 0 fail, 2 skipped
-node --test test/coordination.test.mjs  -> 63 pass, 0 fail, 41 skipped
+npm test   -> 136 tests: 90 pass, 0 fail, 46 skipped
 ```
 
 The skips are `{ skip: <reason> }` with the reason attached, never a silently dropped
-test: 34 need the iOS Simulator, 5 need the recording rig that was built around POSIX
-process semantics, 1 needs the macOS approval dialog, 1 needs `devicectl`.
+test: 35 need the iOS Simulator, 5 need the recording rig that was built around POSIX
+process semantics, 3 fake the macOS installer or update script, 1 fakes the approval
+dialog, 1 needs the Unix-socket remote helper, 1 needs `devicectl`. Manual probes that
+talk to a real phone live in `test/probes/` and are not part of `npm test`.
 
 Two Windows facts the assertions had to learn:
 
