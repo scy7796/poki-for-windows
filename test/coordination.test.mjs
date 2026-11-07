@@ -972,6 +972,26 @@ test('application names reuse a per-device directory across sessions and refresh
  }
 });
 
+test('a control listed twice at the same spot is tapped once, while separate matches stay ambiguous', async t => {
+ const f=await fixture(t);
+ const box=(x,y,width,height)=>({x,y,width,height});
+ for (const elements of [
+  [{label:'Cart',role:'Button',frame:box(10,10,40,20)},{label:'Cart',role:'Button',frame:box(10,10,40,20)}],
+  [{label:'Cart',role:'Other',frame:box(0,0,100,60)},{label:'Cart',role:'Button',frame:box(10,10,40,20)}],
+ ]) {
+  await f.set({elements});
+  const before=(await f.events()).length;
+  const result=await f.call('tap_text',{text:'Cart'});
+  assert.notEqual(result.isError,true,result.content[0].text);
+  assert.equal((await f.events()).slice(before).filter(event=>event.op==='tap').length,1);
+ }
+ await f.set({elements:[{label:'Cart',role:'Button',frame:box(10,10,40,20)},{label:'Cart',role:'Button',frame:box(10,100,40,20)}]});
+ const before=(await f.events()).length;
+ const ambiguous=await f.call('tap_text',{text:'Cart'});
+ assert.equal(ambiguous.isError,true);assert.match(ambiguous.content[0].text,/found 2/);
+ assert.equal((await f.events()).slice(before).filter(event=>event.op==='tap').length,0);
+});
+
 test('verify:false omits action verification and batches observe once after all inputs', async t => {
  const f=await fixture(t);
  for(const [tool,args,inputOp,locationReads] of [
