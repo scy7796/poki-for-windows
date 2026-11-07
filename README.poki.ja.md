@@ -1,3 +1,5 @@
+> これは macOS 向けの [Poki](https://github.com/JosssphZhou/poki) 本体の README です。このリポジトリの Windows 版については [README.md](README.md) をご覧ください。
+
 <p align="center">
   <img src="docs/images/poki-icon.png" width="72" height="72" alt="Poki icon">
 </p>
@@ -9,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="README.poki.md">English</a> | <a href="README.zh-CN.md">简体中文</a> | <a href="README.zh-TW.md">繁體中文</a> | 日本語 | <a href="README.ko.md">한국어</a> | <a href="README.es.md">Español</a><br>
+  <a href="README.poki.md">English</a> | <a href="README.poki.zh-CN.md">简体中文</a> | <a href="README.poki.zh-TW.md">繁體中文</a> | 日本語 | <a href="README.poki.ko.md">한국어</a> | <a href="README.poki.es.md">Español</a><br>
   <a href="https://poki.bot">poki.bot</a>
 </p>
 

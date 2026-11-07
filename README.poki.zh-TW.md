@@ -1,3 +1,5 @@
+> 這是 [Poki](https://github.com/JosssphZhou/poki) 原專案的說明，適用於 macOS。本倉庫的 Windows 版請看 [README.zh-CN.md](README.zh-CN.md)（簡體中文）或 [README.md](README.md)。
+
 <p align="center">
   <img src="docs/images/poki-icon.png" width="72" height="72" alt="Poki icon">
 </p>
@@ -9,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="README.poki.md">English</a> | <a href="README.zh-CN.md">简体中文</a> | 繁體中文 | <a href="README.ja.md">日本語</a> | <a href="README.ko.md">한국어</a> | <a href="README.es.md">Español</a><br>
+  <a href="README.poki.md">English</a> | <a href="README.poki.zh-CN.md">简体中文</a> | 繁體中文 | <a href="README.poki.ja.md">日本語</a> | <a href="README.poki.ko.md">한국어</a> | <a href="README.poki.es.md">Español</a><br>
   <a href="https://poki.bot">poki.bot</a>
 </p>
 

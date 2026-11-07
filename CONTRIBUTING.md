@@ -1,5 +1,7 @@
 # Contributing
 
+This repository is the Windows port of [Poki](https://github.com/JosssphZhou/poki). A change that also matters on macOS belongs upstream; send it there first.
+
 Open an issue before a large change. For a small fix, open a pull request.
 
 Run `npm test` before you submit. Say in the pull request whether you also tested on a Simulator or a physical iPhone.

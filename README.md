@@ -10,6 +10,11 @@
 </p>
 
 <p align="center">
+  English | <a href="README.zh-CN.md">简体中文</a><br>
+  Poki on macOS: <a href="https://poki.bot">poki.bot</a> · <a href="README.poki.md">upstream README</a>
+</p>
+
+<p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-blue" alt="License: AGPL-3.0-only"></a>
   <img src="https://img.shields.io/badge/host-Windows%2011-0078D4" alt="Host: Windows 11">
   <img src="https://img.shields.io/badge/phone-iOS%2027-lightgrey" alt="Phone: iOS 27">
@@ -30,7 +35,7 @@ Install https://github.com/scy7796/poki-for-windows following its root AGENTS.md
 
 ## Install it yourself
 
-You need Windows 11, Git, Node.js 24+, Python 3.11+, Rust (rustup), ffmpeg, and the Apple Devices app from the Microsoft Store.
+You need Windows 11, Git, Node.js 24+, Python 3.11+, Rust (rustup), and the Apple Devices app from the Microsoft Store. ffmpeg is optional and only used for screen recording.
 
 ```powershell
 git clone https://github.com/scy7796/poki-for-windows.git
@@ -70,7 +75,7 @@ All numbers below come from one Windows 11 PC (Intel Core Ultra 9) and one iPhon
 
 Where a 6.4 s tap goes: 1.7 s is the touch itself (opening the media session, a fixed one-second warm-up, the touch), and about 3.9 s is reading the screen before and after to confirm what changed. Pass `verify: false` to `tap`, `tap_text`, `swipe`, `scroll` or `batch_commands` to skip that check when you don't need it. The saving has not been timed on the phone yet.
 
-From a real task log: setting up an iOS Shortcuts automation took 38 UI steps, and 30 went through. Of the 8 that failed, 3 were the service being restarted underneath the task, 2 were taps over Wi-Fi before the audio fix below, 1 was another app holding the microphone, 1 was a `tap_text` that gave up before OCR finished (its time limit has been fixed since), and 1 reported an error after the text had been typed.
+From a real task log: setting up an iOS Shortcuts automation took 38 UI steps, and 30 went through. Of the 8 that failed, 3 were the service being restarted underneath the task, 2 were taps over Wi-Fi before the audio fix (a refused audio stream no longer fails the input), 1 was another app holding the microphone, 1 was a `tap_text` that gave up before OCR finished (its time limit has been fixed since), and 1 reported an error after the text had been typed.
 
 ## Known limits
 
@@ -90,6 +95,8 @@ From a real task log: setting up an iOS Shortcuts automation took 38 UI steps, a
 
 ## Relationship to Poki
 
-Poki is written by [Joseph Zhou](https://github.com/JosssphZhou) and contributors. This repository keeps its history and its AGPL-3.0-only license, and adds the Windows port on top of v0.1.1. The upstream README is kept as [README.poki.md](README.poki.md), and the port's design notes are in [docs/windows.md](docs/windows.md).
+Poki is written by [Joseph Zhou](https://github.com/JosssphZhou) ([@openmys](https://x.com/openmys) on X) and contributors; its site is [poki.bot](https://poki.bot). This repository keeps Poki's history and its AGPL-3.0-only license, and adds the Windows port on top of v0.1.1. Poki's maintainers have no Windows machine to test on, so they asked for the port to live in its own repository, and it is maintained here. The fix that is not Windows-specific went back upstream as [JosssphZhou/poki#39](https://github.com/JosssphZhou/poki/pull/39).
+
+Poki's own READMEs are kept as [README.poki.md](README.poki.md) and its translations (`README.poki.zh-CN.md` and so on). The port's design notes are in [docs/windows.md](docs/windows.md).
 
 Problems that only happen on Windows belong here. Problems you can reproduce on a Mac belong upstream.

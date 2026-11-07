@@ -4,7 +4,7 @@ labels: [bug]
 body:
   - type: markdown
     attributes:
-      value: Remove passcodes, tokens, and private screen contents. To report a vulnerability, use [private reporting](https://github.com/JosssphZhou/poki/security/advisories/new).
+      value: Remove passcodes, tokens, and private screen contents. To report a vulnerability, use [private reporting](https://github.com/scy7796/poki-for-windows/security/advisories/new).
   - type: textarea
     id: what
     attributes:
@@ -41,6 +41,6 @@ body:
     id: versions
     attributes:
       label: Versions
-      description: Poki commit, macOS, Xcode, and iOS.
+      description: Commit, Windows build (winver), iPhone model and iOS version, USB or Wi-Fi.
     validations:
       required: true
