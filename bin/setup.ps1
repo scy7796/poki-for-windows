@@ -53,11 +53,13 @@ if ($LASTEXITCODE -ne 0) { throw "Checking out $pinned failed." }
 # aws-lc needs CMake, NASM and Perl. rustcrypto is pure Rust, so the toolchain that
 # ships with rustup is enough. The change is recorded, not silent.
 foreach ($file in 'idevice/Cargo.toml', 'tools/Cargo.toml') {
-  $path = Join-Path '.deps/idevice' $file
-  $text = Get-Content $path -Raw
+  $path = (Resolve-Path (Join-Path '.deps/idevice' $file)).Path
+  # The manifests hold non-ASCII text; Windows PowerShell 5.1 reads and writes ANSI by default.
+  $utf8 = New-Object System.Text.UTF8Encoding $false
+  $text = [IO.File]::ReadAllText($path, $utf8)
   $patched = $text -replace 'default = \["aws-lc"\]', "default = [`"$crypto`"]"
   if ($patched -ne $text) {
-    Set-Content -Path $path -Value $patched -NoNewline
+    [IO.File]::WriteAllText($path, $patched, $utf8)
     Write-Host "patched $path to the $crypto TLS backend"
   }
 }
