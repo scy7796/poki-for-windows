@@ -248,7 +248,7 @@ matching; a Latin-only string keeps its word boundaries.
 ## Speed: where the milliseconds actually go
 
 Every tool reply carries `_meta.timing.stages`, so this is measured rather than guessed.
-`test/perf-probe.mjs` prints them for a screenshot, an element read, OCR and a tap.
+`test/probes/perf-probe.mjs` prints them for a screenshot, an element read, OCR and a tap.
 
 Before the OCR work, on the same phone:
 

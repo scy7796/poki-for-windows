@@ -1,9 +1,9 @@
 // Runs one tool call and prints the stage timings the daemon reports for it.
-//   node test/call-stages.mjs <tool> '<json args>'
+//   node test/probes/call-stages.mjs <tool> '<json args>'
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { join } from 'node:path';
-import { root } from '../src/config.mjs';
+import { root } from '../../src/config.mjs';
 
 const [name, raw = '{}'] = process.argv.slice(2);
 const client = new Client({ name: 'call-stages', version: '1' });

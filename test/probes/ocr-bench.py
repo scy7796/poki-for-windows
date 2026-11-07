@@ -4,7 +4,7 @@ Poki recognizes every frame it observes, so what matters is the cost of one fram
 process that is already warm, not the cost of a cold start. Each configuration therefore
 runs one discarded warm-up call and then N measured calls in the same process.
 
-    python test/ocr-bench.py IMAGE... --runs 10
+    python test/probes/ocr-bench.py IMAGE... --runs 10
 
 Reports first call, median and p90 in milliseconds, plus the text found so two
 configurations can be compared on accuracy as well as speed.

@@ -4,11 +4,11 @@
 // no other app is touched and nothing is submitted. A tap counts as a miss when the search
 // interface does not appear, which is what a caller would notice.
 //
-//   node test/tap-miss.mjs [attempts]
+//   node test/probes/tap-miss.mjs [attempts]
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { join } from 'node:path';
-import { root } from '../src/config.mjs';
+import { root } from '../../src/config.mjs';
 
 const attempts = Number(process.argv[2] ?? 50);
 const client = new Client({ name: 'tap-miss', version: '1' });

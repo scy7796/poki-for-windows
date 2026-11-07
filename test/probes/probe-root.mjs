@@ -1,7 +1,7 @@
 ﻿import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { join } from 'node:path';
-import { root } from '../src/config.mjs';
+import { root } from '../../src/config.mjs';
 const client = new Client({ name: 'probe', version: '1' });
 await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(root, 'src/stdio.mjs')], env: process.env }));
 const call = async (name, args = {}) => {

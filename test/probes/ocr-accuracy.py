@@ -4,7 +4,7 @@ Ground truth was read off the image by eye (crop-top.png / crop-mid.png): the st
 time, the WeChat title with its unread count, and the search field placeholder. Those are
 the strings a caller actually asks Poki to tap, so getting them right is what matters.
 
-    python test/ocr-accuracy.py result.json IMAGE
+    python test/probes/ocr-accuracy.py result.json IMAGE
 """
 import json
 import re

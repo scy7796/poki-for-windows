@@ -5,7 +5,7 @@
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { join } from 'node:path';
-import { root } from '../src/config.mjs';
+import { root } from '../../src/config.mjs';
 
 const runs = Number(process.argv[2] ?? 10);
 const withInput = process.argv.includes('--input');
