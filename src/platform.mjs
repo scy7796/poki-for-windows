@@ -714,7 +714,9 @@ async function terminatePhysical(ctx, target, app) {
 }
 
 async function downloadContainer(target, args) {
-  if (isWin && target.kind !== 'simulator') requiresMac('Downloading an app data container');
+  // Both branches below reach for devicectl and plutil, which are Xcode's, so the whole tool is
+  // unavailable here - not only for a physical device.
+  if (isWin) requiresMac('Downloading an app data container');
   const app = await resolveApp(target, args);
   const base = absolutePath(args.output_directory ?? args.destination ?? join(stateDir, 'containers'));
   const holder = await newDirectory(base, `${app.bundle_id}-`);
