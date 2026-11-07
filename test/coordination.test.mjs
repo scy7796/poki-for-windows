@@ -794,6 +794,14 @@ test('a recognition that began inside the five seconds still finishes and is use
  assert.equal(inputSent(await f.events()),true);
 });
 
+test('a failed text search keeps the foreground accessibility reported when OCR has no answer',async t=>{
+ const f=await fixture(t);await f.set({elements:[],launched:true,ocrLabel:'',ocrDelayMs:6000});
+ const result=await f.call('tap_text',{text:'Absent'});
+ assert.equal(result.isError,true);
+ assert.match(result.content[0].text,/foreground: local\.fixture/);
+ assert.doesNotMatch(result.content[0].text,/foreground: unknown/);
+});
+
 test('no new look starts after the five seconds, so a late empty read never reaches OCR',async t=>{
  const f=await fixture(t);await f.set({axDelayMs:6000,axEmpty:true});
  const result=await f.call('tap_text',{text:'First'});

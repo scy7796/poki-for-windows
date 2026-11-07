@@ -130,7 +130,9 @@ async function locate(ctx, find, describe, mustHold, verify = true) {
           // A host without a recognizer still has accessibility: losing OCR narrows the search,
           // it does not end it.
           try {
-            seen = { ...seen, ...await ctx.recognize({ source: 'ocr', max_elements: Number.MAX_SAFE_INTEGER }) };
+            const recognized = await ctx.recognize({ source: 'ocr', max_elements: Number.MAX_SAFE_INTEGER });
+            // Recognition never reports a foreground, so it must not erase the one accessibility read.
+            seen = { ...seen, ...recognized, foreground: recognized.foreground ?? seen.foreground };
             found = find(seen.elements);
             if (found.length) nextOcr = elapsed;
           } catch (error) { if (stopped(error)) throw error; ocrMissing = true; }
