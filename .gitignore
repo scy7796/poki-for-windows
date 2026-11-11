@@ -7,7 +7,7 @@ build/
 .env
 .env.*
 
-# Compiled by test/shim.c; rebuilt by bin/setup.ps1 and by the test fixture on demand.
+# Compiled by test/shim.c; rebuilt by bin/setup.ps1 when gcc is installed.
 test/shim.exe
 
 __pycache__/

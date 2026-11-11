@@ -334,13 +334,16 @@ privilege, and the code that watches the bridge edits the launcher's sibling scr
 while touching the launcher so its build marker moves.
 
 ```
-npm test   -> 136 tests: 90 pass, 0 fail, 46 skipped
+npm test   -> 282 tests: 183 pass, 0 fail, 99 skipped
 ```
 
 The skips are `{ skip: <reason> }` with the reason attached, never a silently dropped
-test: 35 need the iOS Simulator, 5 need the recording rig that was built around POSIX
-process semantics, 3 fake the macOS installer or update script, 1 fakes the approval
-dialog, 1 needs the Unix-socket remote helper, 1 needs `devicectl`. Manual probes that
+test: 38 need the iOS Simulator, 41 cover upstream's iPhone app installer and voice
+bridge, which this port does not ship, 5 need the recording rig that was built around
+POSIX process semantics, 5 use fake device tools written as POSIX shell scripts, 3 fake
+the macOS installer or update script, 3 need the Unix-socket helper, 2 need tools only
+Xcode offers, 1 needs `plutil`, 1 fakes the approval dialog. `test/shim.exe` has to exist
+first; `bin/setup.ps1` builds it when gcc is installed. Manual probes that
 talk to a real phone live in `test/probes/` and are not part of `npm test`.
 
 Two Windows facts the assertions had to learn:

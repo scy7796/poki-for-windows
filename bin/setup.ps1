@@ -92,6 +92,13 @@ Step 'Building the native bridge'
 & node bin/build-native.mjs
 if ($LASTEXITCODE -ne 0) { throw 'Building the bridge failed.' }
 
+Step 'Building the test launcher'
+# Only npm test needs it; the service runs without it.
+if (Get-Command gcc -ErrorAction SilentlyContinue) {
+  & gcc -municode -O2 test/shim.c -o test/shim.exe
+  if ($LASTEXITCODE -ne 0) { throw 'Building test/shim.exe failed.' }
+} else { Write-Host 'gcc not found: npm test needs test/shim.exe. To build it: winget install BrechtSanders.WinLibs.POSIX.UCRT, then run this script again.' }
+
 Step 'Next'
 Write-Host @'
 1. Start the Apple USB service by opening the Apple Devices app. Nothing listens on
