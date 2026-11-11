@@ -816,8 +816,10 @@ async function buildAndRun(ctx, target, args) {
   return { ...launched, app_path: appPath, build_log: buildLog, derived_data: derived };
 }
 
+// A phone path is POSIX on every host. Windows' fileURLToPath would turn it into \private\var\...,
+// which no listing path starts with, so the URL is always read as POSIX.
 function filesystemPath(value) {
-  return value.startsWith('file:') ? fileURLToPath(value) : value;
+  return value.startsWith('file:') ? fileURLToPath(value, { windows: false }) : value;
 }
 
 // devicectl reports each executable as a file URL. list_apps reports a filesystem path.

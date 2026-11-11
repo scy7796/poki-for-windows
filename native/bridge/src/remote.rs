@@ -306,6 +306,7 @@ async fn dial(host: &str, port: u16) -> std::result::Result<TcpStream, String> {
 }
 
 // Names an IPv6 scope by its interface, so a link-local attempt shows which network it used.
+#[cfg(unix)]
 fn endpoint(address: SocketAddr) -> String {
     let SocketAddr::V6(v6) = address else {
         return address.to_string();
@@ -318,6 +319,12 @@ fn endpoint(address: SocketAddr) -> String {
     }
     let interface = unsafe { std::ffi::CStr::from_ptr(name.as_ptr()) }.to_string_lossy();
     format!("[{}%{interface}]:{}", v6.ip(), v6.port())
+}
+
+// Windows has no if_indextoname in libc; its scope id is printed as the number Windows uses.
+#[cfg(not(unix))]
+fn endpoint(address: SocketAddr) -> String {
+    address.to_string()
 }
 
 fn socket_failure(error: &(dyn std::error::Error + Send + Sync + 'static)) -> bool {
@@ -846,7 +853,13 @@ mod tests {
         }
     }
 
+    // The link-local case binds macOS's loopback interface lo0, and the expected text is macOS's
+    // errno 61; Linux names that interface lo and Windows has neither.
     #[tokio::test]
+    #[cfg_attr(
+        not(target_os = "macos"),
+        ignore = "needs macOS: binds fe80::1%lo0 and expects macOS's ECONNREFUSED text"
+    )]
     async fn unreachable_control_reports_each_address_and_its_os_error() {
         use tokio::net::TcpListener;
         for (host, address) in [("127.0.0.1", "127.0.0.1"), ("fe80::1%lo0", "[fe80::1%lo0]")] {
