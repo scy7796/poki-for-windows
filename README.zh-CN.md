@@ -6,7 +6,7 @@
 
 <p align="center">
   在 Windows 电脑上通过 MCP 操作真实的 iPhone：截图、读无障碍树、OCR、点击、打字、滑动。<br>
-  <a href="https://github.com/JosssphZhou/poki">Poki</a> v0.1.1 的社区移植版，原版运行在 macOS 上。由 <a href="https://github.com/scy7796">Chenyu Shi</a> 移植和维护。
+  <a href="https://github.com/JosssphZhou/poki">Poki</a> 的社区移植版，原版运行在 macOS 上；已同步到上游 main 2026-11-11 的 <code>f8439b5</code>。由 <a href="https://github.com/scy7796">Chenyu Shi</a> 移植和维护。
 </p>
 
 <p align="center">
@@ -18,10 +18,11 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-blue" alt="License: AGPL-3.0-only"></a>
   <img src="https://img.shields.io/badge/host-Windows%2011-0078D4" alt="Host: Windows 11">
   <img src="https://img.shields.io/badge/phone-iOS%2027-lightgrey" alt="Phone: iOS 27">
-  <img src="https://img.shields.io/badge/tests-90%20pass%20%7C%200%20fail-brightgreen" alt="Tests: 90 pass, 0 fail">
 </p>
 
 MCP 服务、工具和 Rust 桥都和 Poki 一样。变的是电脑怎么连到手机、状态文件放在哪、用哪个 OCR 引擎读屏，以及去掉了几个离不开 Xcode 的工具。只有当 pymobiledevice3 下载不到你这个 iOS 版本的开发者磁盘映像时，才需要找一台 Mac。
+
+本仓库只管 Windows 主机端的 MCP。想让 Poki 直接跑在 iPhone 上，用上游的 Poki Setup Windows 版，从 [Alpha 发布页](https://github.com/JosssphZhou/poki/releases/tag/app-alpha-latest)下载。
 
 ## 让 agent 帮你装
 
@@ -62,7 +63,7 @@ claude mcp add --scope user poki-mcp -- node "$PWD\src\stdio.mjs"
 
 ## 实测结果
 
-下面的数字都来自同一台 Windows 11 电脑（Intel Core Ultra 9）和同一台 iPhone 16 Pro Max（iPhone17,2，iOS 27.0.1）。换手机、换 iOS 版本、换网络，耗时都会不一样。
+下面的数字都来自同一台 Windows 11 电脑（Intel Core Ultra 9）和同一台 iPhone 16 Pro Max（iPhone17,2，iOS 27.0.1）。换手机、换 iOS 版本、换网络，耗时都会不一样。这些数字是在 v0.1.1 的基础上测的，2026-11-11 同步上游之后还没有重测。
 
 | 项目 | 结果 |
 | --- | --- |

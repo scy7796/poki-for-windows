@@ -6,7 +6,7 @@
 
 <p align="center">
   Drive a real iPhone from a Windows PC through MCP: screenshots, the accessibility tree, OCR, taps, typing and swipes.<br>
-  A community port of <a href="https://github.com/JosssphZhou/poki">Poki</a> v0.1.1, which targets macOS. Built and maintained by <a href="https://github.com/scy7796">Chenyu Shi</a>.
+  A community port of <a href="https://github.com/JosssphZhou/poki">Poki</a>, which targets macOS; in step with upstream main as of 2026-11-11 (<code>f8439b5</code>). Built and maintained by <a href="https://github.com/scy7796">Chenyu Shi</a>.
 </p>
 
 <p align="center">
@@ -18,10 +18,11 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-blue" alt="License: AGPL-3.0-only"></a>
   <img src="https://img.shields.io/badge/host-Windows%2011-0078D4" alt="Host: Windows 11">
   <img src="https://img.shields.io/badge/phone-iOS%2027-lightgrey" alt="Phone: iOS 27">
-  <img src="https://img.shields.io/badge/tests-90%20pass%20%7C%200%20fail-brightgreen" alt="Tests: 90 pass, 0 fail">
 </p>
 
 Same MCP server, same tools, same Rust bridge as Poki. What changes is how the PC reaches the phone, where state lives, which OCR engine reads the screen, and which tools are left out because they need Xcode. You only need a Mac if pymobiledevice3 cannot download the developer disk image for your iOS version.
+
+This repository covers only the host-side MCP on Windows. If you want Poki running on the iPhone itself, upstream ships Poki Setup for Windows: download it from the [Alpha release](https://github.com/JosssphZhou/poki/releases/tag/app-alpha-latest).
 
 ## Let your agent install it
 
@@ -62,7 +63,7 @@ The full walkthrough, Wi-Fi setup included, is in [docs/windows.md](docs/windows
 
 ## What was tested
 
-All numbers below come from one Windows 11 PC (Intel Core Ultra 9) and one iPhone 16 Pro Max (iPhone17,2) on iOS 27.0.1. A different phone, iOS version, or network will give different timings.
+All numbers below come from one Windows 11 PC (Intel Core Ultra 9) and one iPhone 16 Pro Max (iPhone17,2) on iOS 27.0.1. A different phone, iOS version, or network will give different timings. They were measured on the v0.1.1 base, before the 2026-11-11 upstream sync, and have not been measured again since.
 
 | What | Result |
 | --- | --- |
