@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { createServer } from './tools.mjs';
+import { createTaskGate, taskGateEnabled } from './task-gate.mjs';
 import { endpointFile } from './config.mjs';
 import { randomUUID } from 'node:crypto';
 import { version } from './build-info.mjs';
@@ -58,7 +59,7 @@ const server = createServer(async (name, args, extra) => {
     extra.signal.throwIfAborted();
     return await remote.callTool({ name, arguments: args, _meta: { 'poki/request_id': id } }, { timeout: 3700000, signal: extra.signal });
   } finally { extra.signal.removeEventListener('abort', cancel); }
-});
+}, { gate: taskGateEnabled() ? createTaskGate() : undefined });
 const transport = new StdioServerTransport();
 await server.connect(transport);
 let stopping;

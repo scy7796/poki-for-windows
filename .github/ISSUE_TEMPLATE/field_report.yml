@@ -1,0 +1,26 @@
+name: Field report or setup notes
+description: Share a working setup, a port, an install path, or test results. No fix requested.
+labels: [field-report]
+body:
+  - type: markdown
+    attributes:
+      value: Something broken goes in a bug report. Remove passcodes, tokens, Apple account details, and private screen contents.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What you set up or tested, and the result.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Poki version or app build, computer OS, iPhone model, iOS, and connection.
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Steps, changes you made, links to forks or builds, and anything that did not work.

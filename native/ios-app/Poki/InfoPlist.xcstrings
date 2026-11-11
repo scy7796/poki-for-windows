@@ -1,0 +1,114 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "CFBundleDisplayName": {
+      "comment": "Info.plist",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "new",
+            "value": "Poki"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Poki"
+          }
+        }
+      }
+    },
+    "NSCameraUsageDescription": {
+      "comment": "Info.plist",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "new",
+            "value": "Poki uses the camera only to scan the pairing code Poki Setup shows on your computer."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Poki 只用相机扫描电脑上 Poki Setup 显示的配对码。"
+          }
+        }
+      }
+    },
+    "NSLocalNetworkUsageDescription": {
+      "comment": "Info.plist",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "new",
+            "value": "Poki connects to this iPhone's own developer services to pair with it and to run the automation, and to the voice bridge on your Mac."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Poki 会连接此 iPhone 自身的开发者服务，用于配对和运行自动化，也会连接你 Mac 上的语音中转。"
+          }
+        }
+      }
+    },
+    "NSLocationAlwaysAndWhenInUseUsageDescription": {
+      "comment": "Info.plist",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "new",
+            "value": "Poki keeps running in the background while it is on, so agents can reach this iPhone. Poki does not record or send your location."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Poki 开启时会在后台保持运行，让智能体能连上此 iPhone。Poki 不会记录或发送你的位置。"
+          }
+        }
+      }
+    },
+    "NSLocationWhenInUseUsageDescription": {
+      "comment": "Info.plist",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "new",
+            "value": "Poki keeps running in the background while it is on, so agents can reach this iPhone. Poki does not record or send your location."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Poki 开启时会在后台保持运行，让智能体能连上此 iPhone。Poki 不会记录或发送你的位置。"
+          }
+        }
+      }
+    },
+    "NSMicrophoneUsageDescription": {
+      "comment": "Info.plist",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "new",
+            "value": "Poki listens while you talk to it in Voice, and sends that audio to OpenAI to understand what you ask."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你在“语音”里和 Poki 说话时，Poki 会收音，并把音频发给 OpenAI 来理解你的要求。"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

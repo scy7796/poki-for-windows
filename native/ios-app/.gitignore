@@ -1,0 +1,14 @@
+Poki/Assets.xcassets/
+PokiWidgets/Assets.xcassets/
+*.xcodeproj/
+# Written by xcodegen from project.yml.
+Poki/Info.plist
+Poki/Poki.entitlements
+Poki/PokiLocal.entitlements
+PokiWidgets/Info.plist
+PokiWidgets/PokiWidgets.entitlements
+PokiTunnel/Info.plist
+PokiTunnel/PokiTunnel.entitlements
+PokiKeyboard/Info.plist
+PokiKeyboard/PokiKeyboard.entitlements
+KeyboardShared/.build/

@@ -7,7 +7,7 @@
 // RTP payload is discarded there).
 
 use idevice::{
-    ReadWrite, RsdService,
+    IdeviceError, ReadWrite, RsdService,
     core_device::{
         CallInfoBlob, DisplayServiceClient, build_screen_audio_offer, build_screen_video_offer,
         build_start_audio_parameters, build_start_video_parameters,
@@ -30,6 +30,16 @@ pub struct ScreenMediaStream {
     pub video_udp: UdpSocketHandle,
 }
 
+/// The phone offers no displayservice, which input needs. A developer disk image provides it.
+#[derive(Debug)]
+pub struct NoDisplayService;
+impl std::fmt::Display for NoDisplayService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Cannot establish input media session: no display service: ServiceNotFound")
+    }
+}
+impl std::error::Error for NoDisplayService {}
+
 /// Connect the displayservice and start the audio+video screen-sharing session.
 ///
 /// Mirrors what Device Hub does: an audio stream is started first to establish
@@ -39,14 +49,24 @@ pub async fn start_screen_media_stream(
     adapter: &mut AdapterHandle,
     handshake: &mut RsdHandshake,
     display_id: i64,
-) -> Result<ScreenMediaStream, String> {
+) -> Result<ScreenMediaStream, Box<dyn std::error::Error + Send + Sync>> {
     macro_rules! log {
         ($($arg:tt)*) => {{}};
     }
 
     let mut client = DisplayServiceClient::connect_rsd(adapter, handshake)
         .await
-        .map_err(|e| format!("no display service: {e:?}"))?;
+        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+            match e {
+                IdeviceError::ServiceNotFound => Box::new(NoDisplayService),
+                // Keep the io type: remote.rs probes the tunnel after a socket failure.
+                IdeviceError::Socket(e) => Box::new(std::io::Error::new(
+                    e.kind(),
+                    format!("no display service: {e}"),
+                )),
+                e => format!("no display service: {e:?}").into(),
+            }
+        })?;
 
     let audio_udp = adapter
         .bind_udp(0)
@@ -92,10 +112,10 @@ pub async fn start_screen_media_stream(
         CLIENT_SUPPORTED_FEATURES,
         client_session_id,
     );
-    // Device Hub starts audio first, but only the video stream holds dtuhidd's authentication
-    // gate open (pymobiledevice3 and go-ios start video alone). A refused audio start (seen
-    // over RemotePairing from Windows) is therefore logged, not fatal; a failed video start
-    // below still fails the input, so a touch is never reported as sent without the gate.
+    // Only the video stream holds dtuhidd's authentication gate open (pymobiledevice3 and
+    // go-ios start video alone). A refused audio start (seen over RemotePairing from a
+    // Windows host) is therefore not fatal; a failed video start below still fails the
+    // input, so a touch is never reported as sent without the gate.
     match client.start_media_stream(audio_params).await {
         Ok(_) => log!("audio stream started (session {client_session_id})"),
         Err(_error) => log!("audio stream unavailable ({_error:?}); continuing with video only"),

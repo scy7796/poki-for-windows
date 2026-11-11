@@ -70,6 +70,166 @@ impl Drag {
     }
 }
 
+#[derive(Clone, Copy, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PathPoint {
+    pub x: u16,
+    pub y: u16,
+    /// Milliseconds after the stroke touches down; fractions are kept, so 120 points over 1500 ms come 12.5 ms apart.
+    pub time_ms: f64,
+}
+
+pub(crate) const STROKE_GAP_MS: u64 = 80;
+
+/// Separately lifted strokes. Each point is sent once at its stroke's start plus `time_ms`, like `Drag`.
+#[derive(Clone, serde::Deserialize)]
+#[serde(transparent)]
+pub(crate) struct Strokes(pub Vec<Vec<PathPoint>>);
+
+impl Strokes {
+    pub(crate) fn validate(&self) -> Result<()> {
+        if !(1..=12).contains(&self.0.len()) {
+            return Err("strokes must contain 1..12 strokes".into());
+        }
+        let mut total = 0.0;
+        for points in &self.0 {
+            if !(2..=8192).contains(&points.len()) {
+                return Err("a stroke must contain 2..8192 points".into());
+            }
+            if points[0].time_ms != 0.0
+                || points.iter().any(|point| !point.time_ms.is_finite())
+                || points.windows(2).any(|w| w[1].time_ms <= w[0].time_ms)
+            {
+                return Err("time_ms must start at 0 and increase at every point".into());
+            }
+            total += points[points.len() - 1].time_ms;
+        }
+        if total > 60000.0 {
+            return Err("strokes must last at most 60000 ms together".into());
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn send(&self, hid: &mut impl TouchSender) -> Result<()> {
+        for (index, points) in self.0.iter().enumerate() {
+            if index > 0 {
+                tokio::time::sleep(Duration::from_millis(STROKE_GAP_MS)).await;
+            }
+            let start = Instant::now();
+            let first = points[0];
+            hid.send_touchscreen(TOUCHSCREEN_STATE_CONTACT, first.x, first.y)
+                .await?;
+            let mut last = first;
+            let outcome: Result<()> = async {
+                for &point in &points[1..] {
+                    sleep_until(start + Duration::from_secs_f64(point.time_ms / 1000.0)).await;
+                    last = point;
+                    hid.send_touchscreen(TOUCHSCREEN_STATE_CONTACT, point.x, point.y)
+                        .await?;
+                }
+                Ok(())
+            }
+            .await;
+            let release = hid
+                .send_touchscreen(TOUCHSCREEN_STATE_RELEASE, last.x, last.y)
+                .await;
+            outcome?;
+            release?;
+        }
+        Ok(())
+    }
+}
+
+/// Fingers that touch together. Each path uses milliseconds since its own pointer-down; positions
+/// are interpolated at the union of their sample times so PokiCore's independently humanized
+/// fingers keep their exact schedules while sharing one multitouch HID report.
+#[derive(Clone, serde::Deserialize)]
+#[serde(transparent)]
+pub(crate) struct Fingers(pub Vec<Vec<PathPoint>>);
+
+impl Fingers {
+    pub(crate) fn validate(&self) -> Result<()> {
+        if !(1..=5).contains(&self.0.len()) {
+            return Err("fingers must contain 1..5 paths".into());
+        }
+        for points in &self.0 {
+            if !(2..=8192).contains(&points.len()) {
+                return Err("a finger must contain 2..8192 points".into());
+            }
+            if points[0].time_ms != 0.0
+                || points.iter().any(|point| !point.time_ms.is_finite())
+                || points.windows(2).any(|w| w[1].time_ms <= w[0].time_ms)
+                || points.last().is_some_and(|point| point.time_ms > 60_000.0)
+            {
+                return Err("finger time_ms must start at 0, increase, and end by 60000".into());
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn send(&self, hid: &mut impl TouchSender) -> Result<()> {
+        self.validate()?;
+        let mut times: Vec<f64> = self
+            .0
+            .iter()
+            .flat_map(|points| points.iter().map(|point| point.time_ms))
+            .collect();
+        times.sort_by(f64::total_cmp);
+        times.dedup_by(|a, b| (*a - *b).abs() < 0.000_1);
+        let start = Instant::now();
+        for time_ms in times {
+            sleep_until(start + Duration::from_secs_f64(time_ms / 1000.0)).await;
+            let contacts = self.contacts_at(time_ms, true);
+            hid.send_multitouch(&contacts).await?;
+            if self
+                .0
+                .iter()
+                .any(|points| (points.last().unwrap().time_ms - time_ms).abs() < 0.000_1)
+            {
+                let released = self.contacts_at(time_ms, false);
+                hid.send_multitouch(&released).await?;
+            }
+        }
+        Ok(())
+    }
+
+    fn contacts_at(&self, time_ms: f64, endings_touch: bool) -> Vec<TouchscreenContact> {
+        self.0
+            .iter()
+            .enumerate()
+            .map(|(identity, points)| {
+                let last = *points.last().unwrap();
+                let ended = time_ms >= last.time_ms;
+                let (x, y) = if time_ms >= last.time_ms {
+                    (last.x, last.y)
+                } else {
+                    let next = points
+                        .iter()
+                        .position(|point| point.time_ms >= time_ms)
+                        .unwrap();
+                    if next == 0 {
+                        (points[0].x, points[0].y)
+                    } else {
+                        let a = points[next - 1];
+                        let b = points[next];
+                        let progress = (time_ms - a.time_ms) / (b.time_ms - a.time_ms);
+                        (
+                            (a.x as f64 + (b.x as f64 - a.x as f64) * progress).round() as u16,
+                            (a.y as f64 + (b.y as f64 - a.y as f64) * progress).round() as u16,
+                        )
+                    }
+                };
+                TouchscreenContact {
+                    identity: identity as u8,
+                    touching: !ended || endings_touch && (time_ms - last.time_ms).abs() < 0.000_1,
+                    x,
+                    y,
+                }
+            })
+            .collect()
+    }
+}
+
 pub(crate) struct Pinch {
     pub x: u16,
     pub y: u16,
@@ -149,6 +309,7 @@ pub(crate) fn pinch_contacts(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use tokio::time::{Instant, advance};
 
     #[derive(Debug, PartialEq)]
@@ -338,5 +499,180 @@ mod tests {
             }
         }
         assert!(timing_errors.is_empty(), "{}", timing_errors.join("\n"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn strokes_send_each_point_once_on_schedule_and_lift_between_strokes() {
+        let point = |x, y, time_ms| PathPoint { x, y, time_ms };
+        let strokes = Strokes(vec![
+            vec![
+                point(100, 500, 0.0),
+                point(200, 500, 16.0),
+                point(300, 500, 32.0),
+                point(400, 500, 48.0),
+            ],
+            vec![point(500, 100, 0.0), point(500, 200, 20.0)],
+        ]);
+        let contact = |touching, x, y| Contact {
+            id: 0,
+            touching,
+            x,
+            y,
+        };
+        let first = [
+            contact(true, 100, 500),
+            contact(true, 200, 500),
+            contact(true, 300, 500),
+            contact(true, 400, 500),
+            contact(false, 400, 500),
+        ];
+        let second = [
+            contact(true, 500, 100),
+            contact(true, 500, 200),
+            contact(false, 500, 200),
+        ];
+        let both: Vec<_> = first.iter().chain(&second).collect();
+        let gap = STROKE_GAP_MS as f64;
+        // A late send goes out at once and still goes out; the lift gap starts after the release completes.
+        for (delay_ms, fail_at, sent, times) in [
+            (
+                5,
+                None,
+                both.clone(),
+                vec![
+                    0.0,
+                    16.0,
+                    32.0,
+                    48.0,
+                    53.0,
+                    58.0 + gap,
+                    78.0 + gap,
+                    83.0 + gap,
+                ],
+            ),
+            (
+                25,
+                None,
+                both.clone(),
+                vec![
+                    0.0,
+                    25.0,
+                    50.0,
+                    75.0,
+                    100.0,
+                    125.0 + gap,
+                    150.0 + gap,
+                    175.0 + gap,
+                ],
+            ),
+            (
+                5,
+                Some(2),
+                vec![&first[0], &first[1], &first[2], &contact(false, 300, 500)],
+                vec![0.0, 16.0, 32.0, 37.0],
+            ),
+        ] {
+            let mut transport = Transport::new(delay_ms, fail_at);
+            let outcome = strokes.send(&mut transport).await;
+            if fail_at.is_some() {
+                assert_eq!(outcome.unwrap_err().to_string(), "transport failed");
+            } else {
+                outcome.unwrap();
+            }
+            let packets: Vec<_> = transport
+                .transmissions
+                .iter()
+                .map(|t| &t.contacts[0])
+                .collect();
+            assert_eq!(packets, sent, "delay={delay_ms}, fail={fail_at:?}");
+            for (packet, expected_ms) in transport.transmissions.iter().zip(&times) {
+                let actual_ms = packet.at.as_secs_f64() * 1000.0;
+                assert!(
+                    actual_ms >= *expected_ms && actual_ms < expected_ms + 2.0,
+                    "delay={delay_ms}, fail={fail_at:?}: expected {expected_ms} ms, got {actual_ms} ms"
+                );
+            }
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fingers_keep_one_shared_multitouch_timeline_and_release_together() {
+        let point = |x, y, time_ms| PathPoint { x, y, time_ms };
+        let fingers = Fingers(vec![
+            vec![point(100, 100, 0.0), point(110, 100, 50.0)],
+            vec![
+                point(200, 200, 0.0),
+                point(210, 200, 25.0),
+                point(220, 200, 50.0),
+            ],
+        ]);
+        let mut transport = Transport::new(1, None);
+        fingers.send(&mut transport).await.unwrap();
+        assert_eq!(transport.transmissions.len(), 4);
+        let contact = |identity, touching, x, y| Contact {
+            id: identity,
+            touching,
+            x,
+            y,
+        };
+        assert_eq!(
+            transport.transmissions[0].contacts,
+            vec![contact(0, true, 100, 100), contact(1, true, 200, 200)]
+        );
+        assert_eq!(
+            transport.transmissions[1].contacts,
+            vec![contact(0, true, 105, 100), contact(1, true, 210, 200)]
+        );
+        assert_eq!(
+            transport.transmissions[2].contacts,
+            vec![contact(0, true, 110, 100), contact(1, true, 220, 200)]
+        );
+        assert_eq!(
+            transport.transmissions[3].contacts,
+            vec![contact(0, false, 110, 100), contact(1, false, 220, 200)]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_documented_circle_with_fractional_times_is_accepted_and_drawn_on_schedule() {
+        // touch_path's guidance: a circle over 1500 ms with 120 points, a point every 12.5 ms, about 10 degrees past its start.
+        let points: Vec<_> = (0..120)
+            .map(|i| {
+                let angle = i as f64 * std::f64::consts::TAU / 116.0;
+                json!({
+                    "x": (30000.0 + 10000.0 * angle.cos()).round() as u16,
+                    "y": (30000.0 + 10000.0 * angle.sin()).round() as u16,
+                    "time_ms": i as f64 * 12.5,
+                })
+            })
+            .collect();
+        let request: crate::Request = serde_json::from_value(json!({
+            "op": "draw_strokes",
+            "strokes": [points],
+        }))
+        .expect("the helper must accept the documented circle");
+        request.validate().unwrap();
+        let crate::Request::DrawStrokes { strokes } = request else {
+            panic!("parsed as another request");
+        };
+        let mut transport = Transport::new(1, None);
+        strokes.send(&mut transport).await.unwrap();
+        assert_eq!(transport.transmissions.len(), 121);
+        let mut timing_errors = Vec::new();
+        for (index, packet) in transport.transmissions.iter().enumerate() {
+            let expected_ms = if index == 120 {
+                1488.5
+            } else {
+                index as f64 * 12.5
+            };
+            let actual_ms = packet.at.as_secs_f64() * 1000.0;
+            if actual_ms < expected_ms || actual_ms >= expected_ms + 2.0 {
+                timing_errors.push(format!(
+                    "point {index}: expected {expected_ms} ms, got {actual_ms} ms"
+                ));
+            }
+        }
+        assert!(timing_errors.is_empty(), "{}", timing_errors.join("\n"));
+        assert!(!transport.transmissions[120].contacts[0].touching);
     }
 }

@@ -1,0 +1,135 @@
+# Publishes a merged promotion (propose-promotion.yml, promotion-gate.yml): the record in
+# .github/channels.json whose tag does not exist yet. The IPA is the one already built, renamed
+# without the build number (inside, CFBundleVersion keeps it):
+#   beta    Poki-external-0.3.0-beta.1.ipa on app-0.3.0-beta.1, a prerelease, with the Gym scorecards
+#   stable  Poki-external-0.3.0.ipa on app-0.3.0, a full release (never marked Latest: GitHub's
+#           Latest is Poki MCP's v* release, which the Mac server's update check reads)
+# Poki Setup files come along from the source release. Created as a draft, checked, then published.
+# A stable waits for approval in the "stable" environment (Settings > Environments > stable >
+# Required reviewers).
+name: Publish promotion
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/channels.json']
+  workflow_dispatch:
+
+concurrency:
+  group: publish-promotion
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  read:
+    runs-on: ubuntu-latest
+    outputs:
+      rec: ${{ steps.r.outputs.rec }}
+      channel: ${{ steps.r.outputs.channel }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: r
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          rec="$(python3 .github/scripts/promotion.py pending)"
+          echo "$rec"
+          echo "rec=$rec" >> "$GITHUB_OUTPUT"
+          channel="$(echo "$rec" | jq -r '.channel // empty')"
+          case "$channel" in beta|stable|'') ;; *) echo "unknown channel: $channel" >&2; exit 1 ;; esac
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: read
+    if: needs.read.outputs.channel == 'beta' || needs.read.outputs.channel == 'stable'
+    runs-on: ubuntu-latest
+    environment: ${{ needs.read.outputs.channel == 'stable' && 'stable' || 'beta' }}
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      CHANNEL: ${{ fromJSON(needs.read.outputs.rec).channel }}
+      LABEL: ${{ fromJSON(needs.read.outputs.rec).version }}
+      TAG: ${{ fromJSON(needs.read.outputs.rec).tag }}
+      SOURCE: ${{ fromJSON(needs.read.outputs.rec).source }}
+      SHA: ${{ fromJSON(needs.read.outputs.rec).sha }}
+      BASE: ${{ fromJSON(needs.read.outputs.rec).base_version }}
+      BUILD: ${{ fromJSON(needs.read.outputs.rec).build }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ fromJSON(needs.read.outputs.rec).sha }}", fetch-depth: 0, filter: 'tree:0' }
+      - name: The promoted build's files
+        run: |
+          set -euo pipefail
+          mkdir -p src dist
+          if [ "$CHANNEL" = beta ]; then
+            # The alpha's IPA is the Pre-alpha run's artifact for its commit.
+            run="$(gh run list --workflow prealpha.yml --commit "$SHA" --status success --json databaseId --jq '.[0].databaseId')"
+            [ -n "$run" ] || { echo "::error::no Pre-alpha run built $SHA"; exit 1; }
+            gh run download "$run" --name Poki-unsigned --dir src
+            cp src/Poki-external-unsigned.ipa "dist/Poki-external-$LABEL.ipa"
+            cp src/Poki-signing.zip dist/
+            gh release download app-alpha-latest --dir dist --pattern 'PokiSetup-*' --pattern 'SHA256SUMS-desktop.txt' || echo "::warning::no Poki Setup files on app-alpha-latest"
+            # The Gym scorecards from the merged PR's gate, the baseline for the next beta.
+            pr_head="$(gh api "repos/$GH_REPO/commits/$GITHUB_SHA/pulls" --jq '.[0].head.sha')"
+            gate="$(gh run list --workflow promotion-gate.yml --commit "$pr_head" --json databaseId --jq '.[].databaseId' | while read -r id; do
+              gh api "repos/$GH_REPO/actions/runs/$id/artifacts" --jq '.artifacts[].name' | grep -qx gym-scorecard && { echo "$id"; break; }; done)"
+            for name in gym-scorecard gym-scorecard-inprocess; do
+              gh run download "$gate" --name "$name" --dir "src/$name" && cp "src/$name/$name.txt" dist/ || echo "::warning::$name not found"
+            done
+          else
+            gh release download "$SOURCE" --dir src
+            cp src/Poki-external-*.ipa "dist/Poki-external-$LABEL.ipa"
+            cp src/Poki-signing.zip dist/
+            cp src/PokiSetup-* src/SHA256SUMS-desktop.txt dist/ 2>/dev/null || true
+          fi
+          cp deploy/cf-relay/worker.js dist/poki-relay-worker.js
+          (cd dist && sha256sum Poki-external-*.ipa poki-relay-worker.js > SHA256SUMS && cat SHA256SUMS)
+          ls -la dist
+      - name: Notes
+        run: |
+          set -euo pipefail
+          prev="$(git tag --list 'app-[0-9]*' 'ios-v*' --sort=-creatordate | grep -Ev -- '-(pre)?alpha\.' | grep -vx "$TAG" | head -1 || true)"
+          {
+            if [ "$CHANNEL" = beta ]; then
+              n="${LABEL##*beta.}"
+              echo "Beta $n of Poki $BASE, for the Beta channel in Poki Setup. It is Alpha build $BUILD (\`$SOURCE\`), unchanged, after the Poki Gym."
+            else
+              echo "Poki $BASE. It is \`$SOURCE\`, unchanged, after its time on the Beta channel."
+            fi
+            echo
+            echo "Install Poki-external with Poki Setup, or sign it with your own tool (entitlements in Poki-signing.zip). See native/ios-app/README.md."
+            echo
+            if [ -n "$prev" ] && git merge-base --is-ancestor "$prev" HEAD 2>/dev/null; then
+              echo "### Changes since $prev"
+              git log --no-merges --format='- %s (%h)' "$prev..HEAD" | head -80
+            fi
+          } > notes.md
+          cat notes.md
+      - name: Publish
+        run: |
+          set -euo pipefail
+          if [ "$CHANNEL" = beta ]; then
+            title="Poki v$BASE Beta ${LABEL##*beta.}"; kind=(--prerelease --latest=false)
+          else
+            title="Poki v$BASE"; kind=(--latest=false)
+          fi
+          gh release create "$TAG" dist/* --target "$SHA" --draft --title "$title" --notes-file notes.md "${kind[@]}"
+          have="$(gh release view "$TAG" --json assets --jq '.assets | length')"
+          [ "$have" -eq "$(ls dist | wc -l)" ] || { echo "::error::the draft has $have files, expected $(ls dist | wc -l); left as a draft"; exit 1; }
+          gh release edit "$TAG" --draft=false "${kind[@]}"
+          echo "Published $title: https://github.com/$GH_REPO/releases/tag/$TAG" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Release branch on a version's first beta
+        if: env.CHANNEL == 'beta'
+        run: |
+          branch="release/${BASE%.*}"
+          if gh api "repos/$GH_REPO/branches/$branch" >/dev/null 2>&1; then
+            echo "$branch exists"
+          else
+            gh api "repos/$GH_REPO/git/refs" -f ref="refs/heads/$branch" -f sha="$SHA" >/dev/null && echo "Created $branch at $SHA" || echo "::warning::could not create $branch"
+          fi

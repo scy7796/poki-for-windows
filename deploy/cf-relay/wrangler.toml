@@ -1,0 +1,38 @@
+# Poki relay on Cloudflare Workers. Each user deploys their own with ./deploy.sh (see DEPLOY.md).
+name = "poki-relay"
+main = "src/index.js"
+compatibility_date = "2025-10-01"
+
+# The relay answers on <name>.<your subdomain>.workers.dev. For your own hostname, run
+# ./deploy.sh --domain relay.example.com; there is no hostname in this file.
+workers_dev = true
+
+# No logs, traces or analytics of requests.
+[observability]
+enabled = false
+
+[[durable_objects.bindings]]
+name = "DEVICE"
+class_name = "DeviceRelay"
+
+[[durable_objects.bindings]]
+name = "BUDGET"
+class_name = "Budget"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["DeviceRelay", "Budget"]
+
+# Hard caps (requests are MCP requests that reach the phone). See DEPLOY.md for the cost model.
+[vars]
+MAX_BODY = "4194304"
+REQ_TIMEOUT_MS = "180000"
+PER_MINUTE = "60"
+CONCURRENT = "4"
+LABEL_DAILY = "5000"
+GLOBAL_DAILY = "8000"
+GLOBAL_DAILY_SECONDS = "80000"
+# REDIRECT_HOSTS = "claude.ai,claude.com,chatgpt.com,openai.com,poke.com,agent.meta.ai,perplexity.ai,mistral.ai,gemini.google.com,copilot.microsoft.com,vscode.dev,cursor.com,manus.im,x.ai,grok.com,n8n.cloud,zapier.com,huggingface.co"  # optional: leave unset (recommended) to accept any https callback; set it to allow only these hosts. Loopback http and known agent app schemes (cursor:, vscode:, windsurf:, zed:, raycast:, ...) are always allowed.
+
+# Secret, not in this file: TOKEN_SECRET (32+ random characters), e.g.
+#   openssl rand -base64 48 | wrangler secret put TOKEN_SECRET

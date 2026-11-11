@@ -1,0 +1,91 @@
+# Propose a Beta or Stable: Actions > Propose promotion > Run workflow. Opens a PR that adds the
+# promotion to .github/channels.json (a beta also moves native/ios-app/VERSION on, so later alphas
+# sort above it). The PR runs promotion-gate.yml (the Gym for a beta, the wait for a stable); merging
+# it publishes the same IPA under the new name (publish-promotion.yml). Nothing is rebuilt.
+#
+# The PR is opened as the Poki Release Bot GitHub App (secrets POKI_BOT_APP_ID and
+# POKI_BOT_PRIVATE_KEY): a PR opened with the workflow's own token would start no checks.
+name: Propose promotion
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Promote to
+        type: choice
+        options: [beta, stable]
+      from:
+        description: "Build to promote: an alpha tag (app-0.3.0-alpha.712) for beta, a beta tag (app-0.3.0-beta.1) for stable. Empty: the current Alpha, or the newest Beta."
+        type: string
+        required: false
+        default: ''
+      skip_wait:
+        description: "Stable only: skip the wait after the beta. Say why (kept in channels.json and the PR)."
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  propose:
+    runs-on: ubuntu-latest
+    steps:
+      - id: bot
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.POKI_BOT_APP_ID }}
+          private-key: ${{ secrets.POKI_BOT_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ steps.bot.outputs.token }}
+      - id: p
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          # Form inputs go through the environment, never into the script text.
+          CHANNEL: ${{ inputs.channel }}
+          FROM: ${{ inputs.from }}
+          SKIP: ${{ inputs.skip_wait }}
+        run: python3 .github/scripts/promotion.py propose "$CHANNEL" "$FROM" "$SKIP" | tee -a "$GITHUB_OUTPUT"
+      - name: Open the promotion PR
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          SLUG: ${{ steps.bot.outputs.app-slug }}
+          ACTOR: ${{ github.actor }}
+          SKIP: ${{ inputs.skip_wait }}
+          BRANCH: ${{ steps.p.outputs.branch }}
+          CHANNEL: ${{ steps.p.outputs.channel }}
+          VERSION: ${{ steps.p.outputs.version }}
+          TAG: ${{ steps.p.outputs.tag }}
+          SOURCE: ${{ steps.p.outputs.source }}
+          SHA: ${{ steps.p.outputs.sha }}
+        run: |
+          set -euo pipefail
+          id="$(gh api "/users/${SLUG}[bot]" --jq .id)"
+          git config user.name "${SLUG}[bot]"
+          git config user.email "${id}+${SLUG}[bot]@users.noreply.github.com"
+          branch="$BRANCH"
+          git switch -c "$branch"
+          git add .github/channels.json native/ios-app/VERSION
+          git commit -m "Promote ${SOURCE} to ${CHANNEL} as ${TAG}"
+          git push origin "$branch"
+          channel="$CHANNEL"
+          {
+            echo "Promotes \`${SOURCE}\` (${SHA}) to **${channel^}** as \`${TAG}\`. The same IPA is published under the new name; nothing is rebuilt."
+            echo
+            if [ "$channel" = beta ]; then
+              echo "- Gate: the Gym on this commit, with no more failures than the last beta (promotion-gate.yml)."
+              echo "- Also moves \`native/ios-app/VERSION\` on (see the diff), so later alphas sort above this beta in Poki Setup."
+              echo "- Merging publishes the prerelease and creates \`release/X.Y\` on the first beta of a version."
+            else
+              echo "- Gate: the beta has been out for the wait in \`.github/channels.json\` (\`soak_days\`). Add the \`soak-override\` label to skip it."
+              [ -n "$SKIP" ] && echo "- The wait was skipped when proposing: $SKIP"
+              echo "- Merging publishes the full release (not marked Latest, which stays on Poki MCP's v* release), after approval in the \`stable\` environment."
+            fi
+            echo
+            echo "Requested by @$ACTOR."
+          } > body.md
+          gh pr create --base main --head "$branch" --title "Promote Poki v${VERSION} to ${channel^}" --body-file body.md --label promotion

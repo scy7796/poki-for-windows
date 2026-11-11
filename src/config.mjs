@@ -6,6 +6,10 @@ import { applicationData, exe, isWin } from './os.mjs';
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const stateDir = process.env.POKI_MCP_STATE_DIR ?? applicationData('PokiMCP');
 export const endpointFile = join(stateDir, 'mcp.json');
+// usbmuxd answered with an empty list. The first check is whether the operating system sees the phone at all.
+export const noUsbDevice = isWin
+  ? 'usbmuxd answered, but no iPhone is attached over USB. Check whether the iPhone appears in the Apple Devices app. If it does not appear there either, Windows has not attached it: connect it directly with a data cable, unlock it, and accept Trust This Computer.'
+  : 'usbmuxd answered, but no iPhone is attached over USB. Check whether the iPhone appears in the Finder sidebar. If Finder does not show it either, macOS has not attached it: connect it directly with a data cable, unlock it, and accept Trust This Computer. Poki cannot use an iPhone that devicectl reaches only over the network.';
 
 // Cargo names the binary after the package; only Windows keeps the extension.
 export const idevice = process.env.IDEVICE_TOOLS

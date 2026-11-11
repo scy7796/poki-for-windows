@@ -15,6 +15,7 @@ test('CLI step deadline fails a pending model request without waiting for a user
   const dir = await mkdtemp(join(tmpdir(), 'poki-deadline-'));
   const services = await taskServices(join(dir, 'mcp'), { pendingModel: true });
   const child = spawn(process.execPath, ['agent/cli.mjs', '--device', 'synthetic-device', '--model', 'gpt-5.4', '--state', dir, '--step-timeout', '3', 'Read fixture status'], {
+    cwd: new URL('../..', import.meta.url),
     env: { ...process.env, IDEVICE_TOOLS: process.execPath, POKI_MCP_STATE_DIR: join(dir, 'mcp'), OPENAI_API_KEY: 'sk-local-channel-fixture', OPENAI_BASE_URL: services.modelURL, POKI_AGENT_AUTH: 'api-key' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

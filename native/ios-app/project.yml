@@ -1,0 +1,40 @@
+# Full build: the app supplies its own local developer connection.
+include: project-base.yml
+name: Poki
+packages:
+  PokiLoopback:
+    path: ../ios/PokiLoopback
+targets:
+  Poki:
+    entitlements:
+      path: Poki/PokiLocal.entitlements
+      properties:
+        com.apple.security.application-groups: [$(POKI_APP_GROUP)]
+        com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+    dependencies:
+      - target: PokiTunnel
+  PokiTunnel:
+    type: app-extension
+    platform: iOS
+    sources:
+      - PokiTunnel
+      - Shared/TunnelStopSignal.swift
+    info:
+      path: PokiTunnel/Info.plist
+      properties:
+        CFBundleDisplayName: Poki Local Connection
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
+    entitlements:
+      path: PokiTunnel/PokiTunnel.entitlements
+      properties:
+        com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+    dependencies:
+      - package: PokiLoopback
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(POKI_BUNDLE_ID).tunnel
+        APPLICATION_EXTENSION_API_ONLY: YES

@@ -1,4 +1,4 @@
-use super::Result;
+use super::{Result, not_sent_error};
 use futures_util::TryStreamExt;
 use idevice::{
     IdeviceService, RsdService,
@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaunchRequest {
     pub bundle_id: Option<String>,
@@ -66,7 +66,9 @@ pub async fn launch(
     rsd: &mut RsdHandshake,
     request: LaunchRequest,
 ) -> Result<Value> {
-    let mut service = AppServiceClient::connect_rsd(adapter, rsd).await?;
+    let mut service = AppServiceClient::connect_rsd(adapter, rsd)
+        .await
+        .map_err(not_sent_error)?;
     let (bundle_id, name) = if let Some(bundle_id) = request.bundle_id {
         (bundle_id.clone(), bundle_id)
     } else {
@@ -108,6 +110,45 @@ pub async fn launch(
     Ok(
         json!({"bundle_id":bundle_id,"name":name,"pid":response.pid,"launched":true,"transport":"paired-device-app-service"}),
     )
+}
+
+/// Ends the running process for a bundle through DVT, without starting XCTest. An app that is not
+/// running is already terminated. The desktop bridge's existing request protocol is unchanged.
+pub async fn terminate(
+    adapter: &mut AdapterHandle,
+    rsd: &mut RsdHandshake,
+    bundle_id: &str,
+) -> Result<Value> {
+    let mut service = AppServiceClient::connect_rsd(adapter, rsd)
+        .await
+        .map_err(not_sent_error)?;
+    let apps = installed_apps(&mut service, rsd).await?;
+    let bundle = apps
+        .iter()
+        .find(|app| app.bundle_identifier == bundle_id)
+        .ok_or_else(|| format!("No installed app has bundle id {bundle_id}."))?;
+    let bundle_path = bare_path(&bundle.path);
+    let pid = service
+        .list_processes()
+        .await?
+        .into_iter()
+        .find_map(|process| {
+            let executable = process.executable_url?.relative;
+            bare_path(&executable)
+                .strip_prefix(bundle_path)
+                .is_some_and(|rest| rest.starts_with('/'))
+                .then_some(process.pid)
+        });
+    let Some(pid) = pid else {
+        return Ok(json!({"terminated": false, "already_stopped": true}));
+    };
+    drop(service);
+    let mut dvt =
+        idevice::dvt::remote_server::RemoteServerClient::connect_rsd(adapter, rsd).await?;
+    dvt.read_message(0).await?;
+    let mut process = idevice::dvt::process_control::ProcessControlClient::new(&mut dvt).await?;
+    process.kill_app(pid as u64).await?;
+    Ok(json!({"terminated": true, "pid": pid}))
 }
 
 async fn installed_apps(
@@ -192,6 +233,51 @@ fn add_localized_names(apps: &mut [Value], icons: &plist::Value) -> usize {
         }
         _ => 0,
     }
+}
+
+/// A path from AppService without its `file://` scheme, `/private` prefix and trailing slash, so
+/// an executable path can be matched against the bundle that contains it.
+fn bare_path(path: &str) -> &str {
+    let path = path.strip_prefix("file://").unwrap_or(path);
+    let path = path.strip_prefix("/private").unwrap_or(path);
+    path.trim_end_matches('/')
+}
+
+/// The installed app whose bundle contains `executable`.
+fn app_for_executable<'a>(apps: &'a [AppListEntry], executable: &str) -> Option<&'a AppListEntry> {
+    let executable = bare_path(executable);
+    apps.iter().find(|app| {
+        let bundle = bare_path(&app.path);
+        !bundle.is_empty()
+            && executable
+                .strip_prefix(bundle)
+                .is_some_and(|rest| rest.starts_with('/'))
+    })
+}
+
+/// Names the app running as `pid`, for an accessibility root that carries no bundle ID.
+pub async fn app_for_pid(
+    adapter: &mut AdapterHandle,
+    rsd: &mut RsdHandshake,
+    pid: u32,
+) -> Result<Value> {
+    let mut service = AppServiceClient::connect_rsd(adapter, rsd)
+        .await
+        .map_err(not_sent_error)?;
+    let executable = service
+        .list_processes()
+        .await?
+        .into_iter()
+        .find(|process| process.pid == pid)
+        .and_then(|process| process.executable_url)
+        .map(|url| url.relative);
+    let Some(executable) = executable else {
+        return Ok(json!({"pid":pid,"running":false,"bundle_id":null,"name":null}));
+    };
+    let apps = installed_apps(&mut service, rsd).await?;
+    let app = app_for_executable(&apps, &executable);
+    Ok(json!({"pid":pid,"running":true,"executable":executable,
+        "bundle_id":app.map(|app| app.bundle_identifier.as_str()),"name":app.map(|app| app.name.as_str())}))
 }
 
 #[cfg(test)]
@@ -289,5 +375,55 @@ mod tests {
         assert_eq!(apps[1]["aliases"], json!(["设置"]));
         assert_eq!(apps[2]["aliases"], json!([]));
         assert_eq!(add_localized_names(&mut apps, &icons), 0);
+    }
+
+    #[test]
+    fn an_executable_maps_to_the_bundle_that_contains_it() {
+        let app = |bundle: &str, path: &str| AppListEntry {
+            name: bundle.into(),
+            bundle_identifier: bundle.into(),
+            path: path.into(),
+            is_removable: true,
+            is_first_party: false,
+            is_developer_app: false,
+            bundle_version: None,
+            is_internal: false,
+            is_hidden: false,
+            is_app_clip: false,
+            version: None,
+        };
+        let apps = vec![
+            app("local.empty", ""),
+            app(
+                "local.chat",
+                "file:///private/var/containers/Bundle/Application/A/Chat.app/",
+            ),
+            app(
+                "local.chatpro",
+                "/var/containers/Bundle/Application/B/ChatPro.app",
+            ),
+            app("com.apple.Preferences", "/Applications/Preferences.app"),
+        ];
+        let find =
+            |path: &str| app_for_executable(&apps, path).map(|a| a.bundle_identifier.as_str());
+        assert_eq!(
+            find("file:///private/var/containers/Bundle/Application/A/Chat.app/Chat"),
+            Some("local.chat")
+        );
+        assert_eq!(
+            find("/var/containers/Bundle/Application/A/Chat.app/Chat"),
+            Some("local.chat")
+        );
+        assert_eq!(
+            find("/private/var/containers/Bundle/Application/B/ChatPro.app/ChatPro"),
+            Some("local.chatpro")
+        );
+        assert_eq!(
+            find("/Applications/Preferences.app/Preferences"),
+            Some("com.apple.Preferences")
+        );
+        // A sibling whose name starts the same is not inside the bundle.
+        assert_eq!(find("/Applications/Preferences.appx/Preferences"), None);
+        assert_eq!(find("/usr/libexec/backboardd"), None);
     }
 }

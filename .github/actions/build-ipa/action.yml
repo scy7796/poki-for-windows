@@ -1,0 +1,120 @@
+# Builds Poki's unsigned IPA(s) for the phone: the steps ios-ipa.yml and prealpha.yml share.
+# The Rust library and Xcode's build folder come from caches. A run on main can read and write
+# them; a run from a tag or a new branch can only read main's, which is why release builds run on
+# main (prealpha.yml) and not from a tag. Produces out/ with the IPA(s), Poki-signing.zip and SHA256SUMS.
+name: Build Poki IPA
+description: Unsigned Poki IPA for the phone, with the Rust library and Xcode build folder cached
+
+inputs:
+  version:
+    description: CFBundleShortVersionString (default native/ios-app/VERSION)
+    required: false
+    default: ''
+  build:
+    description: CFBundleVersion (default the run number)
+    required: false
+    default: ''
+  editions:
+    description: external and/or local
+    required: false
+    default: external
+
+# The caller saves the caches (actions/cache/save with these keys and the same paths) after it has
+# published, so saving never delays a release. Only caches saved on main help other runs.
+outputs:
+  rust-key:
+    description: Cache key of the Rust library
+    value: ${{ steps.rust-key.outputs.key }}
+  rust-hit:
+    description: "'true' when the Rust library came from the cache"
+    value: ${{ steps.rust.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Use the newest Xcode
+      shell: bash
+      run: |
+        XCODE="$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+        sudo xcode-select -s "$XCODE/Contents/Developer"
+        xcodebuild -version && xcrun --sdk iphoneos --show-sdk-version
+
+    # The phone's Rust library is rebuilt only when its sources change.
+    - id: rust-key
+      shell: bash
+      run: echo "key=launcher-${{ hashFiles('native/launcher/src/**', 'native/launcher/include/**', 'native/launcher/Cargo.*', 'native/launcher/fetch-idevice.sh', 'native/patches/**', 'bin/setup', 'desktop/core/src/**', 'desktop/core/Cargo.*') }}" >> "$GITHUB_OUTPUT"
+    - id: rust
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          native/launcher/target
+        key: ${{ steps.rust-key.outputs.key }}
+        restore-keys: launcher-
+    - id: xcode
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          build/app-external
+          build/app-local
+          ~/Library/Developer/Xcode/DerivedData/ModuleCache.noindex
+        key: ipa-fast-${{ github.sha }}
+        restore-keys: ipa-fast-
+
+    - name: PokiLauncher (Rust static library for the phone)
+      if: steps.rust.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        native/launcher/fetch-idevice.sh
+        rustup update stable --no-self-update && rustup default stable
+        rustup target add aarch64-apple-ios
+        cargo build --release --locked --target aarch64-apple-ios --manifest-path native/launcher/Cargo.toml
+        ls -la native/launcher/target/aarch64-apple-ios/release/libpoki_launcher.a
+
+    - name: Assets and project
+      shell: bash
+      run: |
+        native/ios-app/scripts/make-assets.sh
+        command -v xcodegen >/dev/null || brew install xcodegen
+        xcodegen generate --spec native/ios-app/project.yml
+        xcodegen generate --spec native/ios-app/project-external.yml
+
+    - name: Build and package (unsigned)
+      shell: bash
+      env:
+        RELEASE_VERSION: ${{ inputs.version }}
+        RELEASE_BUILD: ${{ inputs.build }}
+        POKI_EDITIONS: ${{ inputs.editions }}
+      run: |
+        set -euo pipefail
+        mkdir -p build out
+        VERSION="${RELEASE_VERSION:-$(tr -d ' \n' < native/ios-app/VERSION)}"
+        BUILD="${RELEASE_BUILD:-$GITHUB_RUN_NUMBER}"
+        for edition in ${POKI_EDITIONS:-external}; do
+          project=Poki
+          ipa=Poki-unsigned.ipa
+          if [ "$edition" = external ]; then project=PokiExternal; ipa=Poki-external-unsigned.ipa; fi
+          echo "::group::$edition edition"
+          xcodebuild build \
+            -project "native/ios-app/$project.xcodeproj" -scheme Poki -configuration Release \
+            -destination generic/platform=iOS -derivedDataPath "build/app-$edition" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO ARCHS=arm64 \
+            MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" \
+            2>&1 | tee "build/app-$edition.log" | grep --line-buffered -E "error:|BUILD (SUCCEEDED|FAILED)|\*\* |^=== BUILD TARGET|^SwiftDriver |^Ld "
+          native/ios-app/scripts/package-app.sh \
+            "build/app-$edition/Build/Products/Release-iphoneos/Poki.app" \
+            "$edition" "out/$ipa" "$VERSION" "$BUILD"
+          python3 native/ios-app/scripts/export-signing.py \
+            "build/app-$edition/Build/Products/Release-iphoneos/Poki.app" \
+            "$edition" "out/signing/$edition"
+          echo "::endgroup::"
+        done
+        ditto -c -k --keepParent out/signing out/Poki-signing.zip
+        (cd out && shasum -a 256 *.ipa | tee SHA256SUMS)
+        for ipa in out/*.ipa; do
+          unzip -p "$ipa" Payload/Poki.app/Info.plist > build/ipa-Info.plist
+          V=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' build/ipa-Info.plist)
+          B=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' build/ipa-Info.plist)
+          echo "$ipa: Poki $V ($B)"; test "$V" = "$VERSION" && test "$B" = "$BUILD"
+        done

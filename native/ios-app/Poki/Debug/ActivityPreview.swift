@@ -1,0 +1,278 @@
+import ActivityKit
+import SwiftUI
+
+/// The Live Activity in every phase, drawn with the widget's own views at the system's sizes (Lock
+/// Screen 371 x up to 160, expanded island 371 wide, compact island), so it can be checked without a
+/// session. Debug > Live Activity.
+///
+/// For the build's screenshots: `-pokiScreen activity -pokiActivityState approval` shows one phase on
+/// its own, and `-pokiActivityDemo approval` also starts a real Live Activity in that phase and, six
+/// seconds later, sends it an alert, so the simulator draws the real Lock Screen and Dynamic Island.
+struct ActivityPreview: View {
+    private let only = UserDefaults.standard.string(forKey: "pokiActivityState")
+    private let demo = UserDefaults.standard.string(forKey: "pokiActivityDemo")
+
+    init() { if Thumbnail.previewImage == nil { Thumbnail.previewImage = Self.sampleScreen() } }
+
+    var body: some View {
+        // A list of the Live Activity's states; each row starts the real one on this iPhone, which iOS
+        // draws on the Lock Screen and in the Dynamic Island.
+        List {
+            Section {
+                ForEach(Self.samples.filter { only == nil || $0.0 == only }, id: \.0) { name, state in
+                    Button { Task.detached { await DemoActivity.run(state) } } label: {
+                        LabeledContent {
+                            Image(systemName: "play.circle.fill").foregroundStyle(.blue).imageScale(.large)
+                        } label: {
+                            Label { Text(verbatim: Self.title(name)) } icon: { Image(systemName: state.face.symbol) }
+                        }
+                    }
+                    .foregroundStyle(Color(.label))
+                }
+            } footer: {
+                Text("Starts that Live Activity on this iPhone. Lock the phone or go to the Home Screen to see it; the next one replaces it.")
+            }
+            Section {
+                Button(role: .destructive) {
+                    Task.detached { for old in Activity<PokiActivityAttributes>.activities { await old.end(nil, dismissalPolicy: .immediate) } }
+                } label: {
+                    // The symbol in red with its title, not the list's tint.
+                    Label("End Live Activity", systemImage: "stop.circle").foregroundStyle(.red)
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("Live Activity")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            if let demo, let state = Self.samples.first(where: { $0.0 == demo })?.1 {
+                // Detached: going to the background must not cancel the demo's wait for its alert.
+                Task.detached { await DemoActivity.run(state) }
+            }
+        }
+    }
+
+    private static func title(_ name: String) -> String {
+        switch name {
+        case "start": String(localized: "Task Started")
+        case "working": String(localized: "Working")
+        case "step": String(localized: "Next Step")
+        case "approval": String(localized: "Approval")
+        case "deciding": String(localized: "Approved")
+        case "yourturn": String(localized: "Your Turn")
+        case "passcode": String(localized: "Passcode")
+        case "done": String(localized: "Done")
+        case "ready": String(localized: "Ready")
+        case "idle": String(localized: "Runner Asleep")
+        case "problem": String(localized: "Problem")
+        case "pairing": String(localized: "Pairing")
+        case "code": String(localized: "Pairing Code")
+        case "setup": String(localized: "Setup")
+        default: name.capitalized
+        }
+    }
+
+    /// Sample states, one per thing the Live Activity can show.
+    static let samples: [(String, PokiState)] = {
+        let now = Date()
+        var start = PokiState(phase: .working, headline: "Open WeChat", thumbnailVersion: 0)
+        start.since = now.addingTimeInterval(-3)
+        start.event = .init(kind: .started, text: "Started")
+
+        var working = PokiState(phase: .working, headline: "Tap “Send”", thumbnailVersion: 1)
+        working.app = "Messages"
+        working.since = now.addingTimeInterval(-42)
+        working.stepCount = 6; working.failedCount = 1
+        working.outcomes = [true, true, false, true, true, true]
+        working.event = .init(kind: .app, text: "Now in Messages")
+
+        var step = working
+        step.event = nil
+        step.headline = "Tap “Search”, then type “Mom”"
+        step.stepCount = 7
+        step.outcomes.append(true)
+
+        var approval = PokiState(phase: .approval, headline: "Allow this step?", thumbnailVersion: 1)
+        approval.app = "Messages"
+        // What PokiCore asks for when the agent taps Send in Messages.
+        approval.approval = PendingApproval(id: "a", app: "Messages", summary: "Tap “Send”", reason: "sending a message (\"send\")", expires: now.addingTimeInterval(25))
+        approval.since = now.addingTimeInterval(-61)
+        approval.stepCount = 4; approval.outcomes = [true, true, true, true]
+
+        var deciding = approval
+        deciding.phase = .deciding; deciding.decision = true
+
+        var yourTurn = PokiState(phase: .handoff, headline: "Your turn", thumbnailVersion: 1)
+        yourTurn.app = "Amazon"
+        yourTurn.since = now.addingTimeInterval(-95)
+        yourTurn.stepCount = 9
+        yourTurn.handoff = .init(id: "h1", kind: .payment, text: "Confirm the $42.10 order with Face ID", app: "Amazon", since: now.addingTimeInterval(-20))
+        var passcode = PokiState(phase: .handoff, headline: "Your turn", thumbnailVersion: 0)
+        passcode.handoff = .init(id: "h2", kind: AutomationPath.current == .inProcess ? .automationPasscode : .runnerPasscode, text: nil, app: nil, since: now.addingTimeInterval(-6))
+
+        var done = PokiState(phase: .done, headline: "Finished", thumbnailVersion: 1)
+        done.app = "Messages"
+        done.since = now.addingTimeInterval(-84); done.endedAt = now
+        done.stepCount = 12; done.failedCount = 1
+        done.outcomes = [true, true, false, true, true, true, true, true, true, true, true, true]
+
+        var ready = PokiState(phase: .idle, headline: "Waiting for agent", thumbnailVersion: 0)
+        var idle = PokiState(phase: .idle, headline: "Runner asleep", thumbnailVersion: 0)
+        idle.runnerPaused = true
+        ready.runnerPaused = false
+
+        let title = AppModel.problemText(code: "loopback", fix: "Turn on the loopback in your proxy app: the Poki module in Surge or Loon.")
+        var problem = PokiState(phase: .problem, headline: title, thumbnailVersion: 0)
+        problem.label = "Runner Stopped"
+        problem.stepCount = 6
+
+        let pairWait = PokiState(phase: .pairing, headline: "Pair in Settings", thumbnailVersion: 0)
+        var pairCode = PokiState(phase: .pairing, headline: "Pairing code", thumbnailVersion: 0)
+        pairCode.pin = "482913"
+
+        var setup = PokiState(phase: .setup, headline: "Setting up Poki", thumbnailVersion: 0)
+        setup.guide = .init(number: 2, count: SetupStep.shown.count, title: SetupStep.developerMode.activityTitle)
+
+        return [("start", start), ("working", working), ("step", step), ("approval", approval), ("deciding", deciding), ("yourturn", yourTurn), ("passcode", passcode), ("done", done),
+                ("ready", ready), ("idle", idle), ("problem", problem), ("pairing", pairWait), ("code", pairCode), ("setup", setup)]
+    }()
+
+    /// A stand-in screenshot (a chat screen) for the thumbnail, drawn here so the preview needs no files.
+    @MainActor static func sampleScreen() -> UIImage? {
+        let view = VStack(alignment: .leading, spacing: 10) {
+            Capsule().fill(.gray.opacity(0.4)).frame(width: 70, height: 10)
+            ForEach(0..<5) { i in
+                HStack {
+                    if i % 2 == 0 { Spacer() }
+                    RoundedRectangle(cornerRadius: 10).fill(i % 2 == 0 ? Color.green : Color(white: 0.85)).frame(width: 90, height: 26)
+                    if i % 2 == 1 { Spacer() }
+                }
+            }
+            Spacer()
+            RoundedRectangle(cornerRadius: 12).fill(Color(white: 0.9)).frame(height: 28)
+        }
+        .padding(14).frame(width: 196, height: 426).background(.white)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 1
+        return renderer.uiImage
+    }
+}
+
+/// The Lock Screen presentation as iOS lays it out: 371 points wide, the card's corner and tint.
+private struct LockScreenFrame: View {
+    var state: PokiState
+    var body: some View {
+        let card = RoundedRectangle(cornerRadius: ActivityMetrics.lockCorner, style: .continuous)
+        LockScreenCard(face: state.face)
+            .frame(maxWidth: 371)
+            .background(ActivityTheme.current.lockBackground ?? Color(.secondarySystemGroupedBackground), in: card)
+            .containerShape(card)
+            .clipShape(card)
+            .overlay(alignment: .bottomTrailing) { HeightBadge() }
+    }
+}
+
+/// The expanded island, regions placed the way iOS does: leading and trailing beside the camera,
+/// the bottom region under them, inside the widget's margins.
+private struct IslandExpandedFrame: View {
+    var state: PokiState
+    var body: some View {
+        let insets = ActivityMetrics.islandInsets
+        let shape = RoundedRectangle(cornerRadius: ActivityMetrics.islandCorner, style: .continuous)
+        // The row beside the camera and the gap under it as iOS lays them out (measured on the
+        // iPhone 17 Pro simulator), so the height badge matches the real island.
+        VStack(spacing: 4) {
+            HStack(spacing: 0) {
+                IslandLeading(face: state.face).frame(width: 110, height: 25)
+                Spacer(minLength: 120)
+                IslandTrailing(face: state.face).frame(width: 110, height: 25)
+            }
+            IslandBottom(face: state.face)
+        }
+        .padding(insets)
+        .frame(maxWidth: 371)
+        .background(.black, in: shape)
+        .overlay { if state.face.outlined { shape.strokeBorder(ActivityTheme.current.approvalOutline, lineWidth: 1.5) } }
+        .overlay(alignment: .top) { Capsule().fill(Color(white: 0.08)).frame(width: 120, height: 36).padding(.top, insets.top) }
+        .overlay(alignment: .bottomTrailing) { HeightBadge() }
+        .environment(\.colorScheme, .dark)
+    }
+}
+
+/// The compact island: leading, the camera, trailing, and the minimal circle beside it.
+private struct IslandCompactFrame: View {
+    var state: PokiState
+    var body: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 0) {
+                CompactLeading(face: state.face).frame(width: 44, alignment: .leading)
+                Color.clear.frame(width: 120)
+                CompactTrailing(face: state.face).frame(width: 60, alignment: .trailing)
+            }
+            .padding(.horizontal, 8).frame(height: 37)
+            .background(.black, in: .capsule)
+            .overlay { if state.face.outlined { Capsule().strokeBorder(ActivityTheme.current.approvalOutline, lineWidth: 1.5) } }
+            MinimalView(face: state.face).frame(width: 37, height: 37).background(.black, in: .circle)
+        }
+        .environment(\.colorScheme, .dark)
+    }
+}
+
+/// Shows the Lock Screen view's height, red over the system's 160 point limit.
+private struct HeightBadge: View {
+    var body: some View {
+        GeometryReader { proxy in
+            let height = Int(proxy.size.height.rounded())
+            Text("\(height) pt").font(.caption2.monospacedDigit().bold())
+                .padding(.horizontal, 5).padding(.vertical, 2)
+                .background(height > 160 ? Color.red : Color.white.opacity(0.15), in: .capsule)
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                .offset(x: 0, y: 22)
+        }
+    }
+}
+
+/// A real Live Activity in one sample phase, for the simulator screenshots.
+@MainActor
+enum DemoActivity {
+    static func run(_ sample: PokiState) async {
+        for old in Activity<PokiActivityAttributes>.activities { await old.end(nil, dismissalPolicy: .immediate) }
+        if let url = SharedContainer.thumbnailURL, let jpeg = ActivityPreview.sampleScreen()?.jpegData(compressionQuality: 0.7) {
+            try? jpeg.write(to: url, options: .atomic)
+        }
+        var state = sample
+        // Times relative to now, so countdowns are live in the screenshots: elapsed starts at 0:00 and
+        // an approval has two minutes, which also shows any clock difference between app and widget.
+        let now = Date()
+        if state.since != nil { state.since = now }
+        if let end = state.endedAt, let since = sample.since { state.endedAt = now; state.since = now.addingTimeInterval(-end.timeIntervalSince(since)) }
+        if var approval = state.approval {
+            approval.expires = now.addingTimeInterval(120); state.approval = approval
+        }
+        // Poki keeps running in the background while it is on; the demo asks for time to send its alert.
+        let task = UIApplication.shared.beginBackgroundTask(withName: "activity demo")
+        defer { UIApplication.shared.endBackgroundTask(task) }
+        guard let activity = try? Activity.request(attributes: PokiActivityAttributes(deviceName: "iPhone"), content: .init(state: state, staleDate: nil), pushType: nil) else {
+            AppLog.shared.add("activity", "demo did not start")
+            return
+        }
+        // Each `notifyutil -p nz.zheha.poki.demo-alert` from the build sends an alert, so the
+        // screenshot is taken right after it (simulator screenshots take seconds; fixed delays miss it).
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        CFNotificationCenterAddObserver(center, UnsafeRawPointer(bitPattern: 0x5051), { _, _, _, _, _ in
+            Task { @MainActor in await DemoActivity.alert() }
+        }, "nz.zheha.poki.demo-alert" as CFString, nil, .deliverImmediately)
+        current = (activity, state)
+        try? await Task.sleep(for: .seconds(28))
+    }
+
+    private static var current: (Activity<PokiActivityAttributes>, PokiState)?
+
+    static func alert() async {
+        guard let (activity, state) = current else { return }
+        await activity.update(.init(state: state, staleDate: nil, relevanceScore: 100),
+                              alertConfiguration: AlertConfiguration(title: "Poki", body: "\(state.headline)", sound: .default))
+        AppLog.shared.add("activity", "demo alert sent")
+    }
+}

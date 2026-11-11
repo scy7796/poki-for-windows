@@ -148,7 +148,7 @@
     },
     {
       "name": "list_elements",
-      "description": "Read accessibility elements, or OCR when auto mode cannot use accessibility. Return logical-point frames and short-lived element refs. Refresh refs after input or screen changes. max_elements defaults to 400. Optional device selects an id or name; otherwise the session selection or sole available device is used.",
+      "description": "Read accessibility elements, or OCR when auto mode cannot use accessibility. When accessibility names nothing across a third of the screen, auto mode adds the screenshot text it did not name, each marked source ocr. Return logical-point frames and short-lived element refs. Refresh refs after input or screen changes. max_elements defaults to 400. Optional device selects an id or name; otherwise the session selection or sole available device is used.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -176,7 +176,7 @@
     },
     {
       "name": "tap",
-      "description": "Tap at x/y in screen points or at the center of a current element ref. Refresh refs with list_elements after input; ambiguous or stale targets are rejected. sent=true only means the touch was written to the device. screen_changed compares what accessibility reports before and after the tap: the elements, their text, values, selected/enabled/focused state and positions. false means no change was observed, which is not proof the tap failed (an effect on a canvas or image, or one that arrives late, is not seen); the reply says so in instruction. Optional device selects an id or name; otherwise the session selection or sole available device is used.",
+      "description": "Tap at x/y in screen points or at the center of a current element ref. Refresh refs with list_elements after input; ambiguous or stale targets are rejected. sent=true only means the touch was written to the device. screen_change compares what accessibility reports before and after the tap: the elements, their text, values, selected/enabled/focused state and positions. It is changed, unchanged, or unknown when the screen could not be compared in time (unknown is not a failure). unchanged is not proof the tap failed (an effect on a canvas or image, or one that arrives late, is not seen); the reply says so in instruction. Optional device selects an id or name; otherwise the session selection or sole available device is used.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -206,7 +206,7 @@
     },
     {
       "name": "tap_text",
-      "description": "Find one visible element matching text, waiting up to five seconds for it to appear and hold still, trying OCR when needed, and tap it. Returns the visible text afterwards and screen_changed. sent=true only means the touch was written to the device, which does not acknowledge it. screen_changed compares what accessibility reports before and after the tap: the elements, their text, values, selected/enabled/focused state and positions. false means no change was observed, which is not proof the tap failed (an effect on a canvas or image, or one that arrives late, is not seen); the reply says so in instruction. Multiple matches produce an error without tapping; a missing target reports the closest text on screen. Optional device selects an id or name; otherwise the session selection or sole available device is used.",
+      "description": "Find one visible element matching text, waiting up to five seconds for it to appear and hold still, trying OCR when needed, and tap it. Returns the visible text afterwards and screen_change. sent=true only means the touch was written to the device, which does not acknowledge it. screen_change compares what accessibility reports before and after the tap: the elements, their text, values, selected/enabled/focused state and positions. It is changed, unchanged, or unknown when the screen could not be compared in time (unknown is not a failure). unchanged is not proof the tap failed (an effect on a canvas or image, or one that arrives late, is not seen); the reply says so in instruction. Multiple matches produce an error without tapping; a missing target reports the closest text on screen. Optional device selects an id or name; otherwise the session selection or sole available device is used.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -332,7 +332,7 @@
     },
     {
       "name": "scroll",
-      "description": "Scroll up, down, left, or right around x/y, or the screen center when omitted. Coordinates use logical points. Waits for the list to stop, then returns screen_changed (false means it did not move, as at the end of a list) and the visible text, so there is no need to look again. Optional device selects an id or name; otherwise the session selection or sole available device is used.",
+      "description": "Scroll up, down, left, or right around x/y, inside the element named by container, or around the screen center when neither is given. Coordinates use logical points. pages moves exactly that many pages of the container (or the screen) and holds before lifting, so the list does not coast past items: use it for carousels and horizontal lists. Waits for the list to stop, then returns screen_change (unchanged means it did not move, as at the end of a list; unknown means it could not be compared), moved (the container whose items shifted, and by how much) and the visible text, so there is no need to look again. Optional device selects an id or name; otherwise the session selection or sole available device is used.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -361,6 +361,15 @@
           "verify": {
             "type": "boolean",
             "description": "Set false to skip action verification. Returns verified:false. Text targeting and coordinate sizing still read current device data."
+          },
+          "container": {
+            "type": "string",
+            "description": "Visible label of the scrolling list or row itself."
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
           }
         },
         "required": [
@@ -370,7 +379,7 @@
     },
     {
       "name": "scroll_to",
-      "description": "Search for visible text and scroll until it is found, content stops changing, or max_scrolls is reached. The default limit is ten scrolls and at most 50 are made; missing text is an error. Optional device selects an id or name; otherwise the session selection or sole available device is used.",
+      "description": "Search for visible text and scroll until it is found, content stops changing, or max_scrolls is reached. container (the label of the scrolling list) or x/y says which list to scroll; left and right move one page at a time without coasting, so items in a carousel are not skipped. The result names the container that moved. The default limit is ten scrolls and at most 50 are made; missing text is an error. Optional device selects an id or name; otherwise the session selection or sole available device is used.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -402,6 +411,10 @@
             "type": "number",
             "minimum": -1000000,
             "maximum": 1000000
+          },
+          "container": {
+            "type": "string",
+            "description": "Visible label of the scrolling list or row itself."
           }
         },
         "required": [
@@ -486,6 +499,119 @@
           "x",
           "y",
           "scale"
+        ]
+      }
+    },
+    {
+      "name": "touch_path",
+      "description": "Draw one continuous stroke: touch down at the first point, pass through every point at its time_ms, and lift at the last point. Points are logical screen points, as in a screenshot; time_ms starts at 0 and strictly increases, with at most 8192 points and 60000 ms. Use it for a circle, a curve or any drag that is not a straight line. Points are sent as given, without smoothing or added timing. sent only means the touches were written; inspect the screen to judge the drawing. Optional device selects an id or name; otherwise the session selection or sole available device is used.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "device": {
+            "type": "string"
+          },
+          "points": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 8192,
+            "items": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number",
+                  "minimum": -1000000,
+                  "maximum": 1000000
+                },
+                "y": {
+                  "type": "number",
+                  "minimum": -1000000,
+                  "maximum": 1000000
+                },
+                "time_ms": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 60000,
+                  "description": "Milliseconds after the stroke touches down, fractions allowed. 0 for the first point, then strictly increasing."
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "time_ms"
+              ]
+            }
+          },
+          "verify": {
+            "type": "boolean",
+            "description": "Set false to skip reading the screen after drawing. Returns verified:false."
+          }
+        },
+        "required": [
+          "points"
+        ]
+      }
+    },
+    {
+      "name": "draw_strokes",
+      "description": "Draw 1 to 12 separate strokes in one call. Each stroke touches down, passes through its points like touch_path and lifts before the next one starts. time_ms starts again at 0 in every stroke; each stroke has at most 8192 points, and the strokes together last at most 60000 ms. Use it for handwriting, a signature or a drawing made of several lines on a canvas that stays still between strokes. sent only means the touches were written; inspect the screen to judge the drawing. Optional device selects an id or name; otherwise the session selection or sole available device is used.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "device": {
+            "type": "string"
+          },
+          "strokes": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 12,
+            "items": {
+              "type": "object",
+              "properties": {
+                "points": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 8192,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "x": {
+                        "type": "number",
+                        "minimum": -1000000,
+                        "maximum": 1000000
+                      },
+                      "y": {
+                        "type": "number",
+                        "minimum": -1000000,
+                        "maximum": 1000000
+                      },
+                      "time_ms": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 60000,
+                        "description": "Milliseconds after the stroke touches down, fractions allowed. 0 for the first point, then strictly increasing."
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "time_ms"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "points"
+              ]
+            }
+          },
+          "verify": {
+            "type": "boolean",
+            "description": "Set false to skip reading the screen after drawing. Returns verified:false."
+          }
+        },
+        "required": [
+          "strokes"
         ]
       }
     },
@@ -640,7 +766,7 @@
     },
     {
       "name": "hide_keyboard",
-      "description": "Detect a visible keyboard, send its toggle event, and verify dismissal. Does nothing when already hidden. Some emoji panels remain visible and are reported as an error without changing input methods. Optional device selects an id or name; otherwise the session selection or sole available device is used.",
+      "description": "Detect a visible keyboard, use its unique visible accessibility hide key when available or send the toggle event, and verify dismissal. Does nothing when already hidden. Some emoji panels remain visible and are reported as an error without changing input methods. Optional device selects an id or name; otherwise the session selection or sole available device is used.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -709,6 +835,10 @@
         "properties": {
           "device": {
             "type": "string"
+          },
+          "verify": {
+            "type": "boolean",
+            "description": "Set false to skip action verification. Returns verified:false. Text targeting and coordinate sizing still read current device data."
           }
         }
       }
@@ -814,7 +944,7 @@
     },
     {
       "name": "launch_app",
-      "description": "Launch an application by bundle_id or unambiguous name. Optional language, locale, arguments, and environment affect launch. Physical-device launch uses the paired device AppService directly and verifies its returned PID against the observed foreground. Physical-device name lookup uses installed names and available localized Home Screen aliases, preferring an exact match then a unique case-insensitive substring; ambiguous matches require an explicit bundle_id. A per-device directory is shared across sessions for up to five minutes; misses or ambiguous cached results refresh once. Explicit bundle_id skips lookup. Name lookup requires the device streaming app-list service. Optional device selects an id or name; otherwise the session selection or sole available device is used.",
+      "description": "Launch an application by bundle_id or unambiguous name. Optional language, locale, arguments, and environment affect launch. Physical-device launch uses the paired device AppService directly and verifies its returned PID against the observed foreground. Physical-device name lookup uses installed names and available localized Home Screen aliases, preferring an exact match then a unique case-insensitive substring; ambiguous matches require an explicit bundle_id. A per-device directory is shared across sessions for up to five minutes; misses or ambiguous cached results refresh once. Explicit bundle_id skips lookup. An app that is already running resumes where it was (resumed=true); fresh=true terminates it first. On a physical device the reply ends with the visible text, so a first-run sheet shows without another look. Name lookup requires the device streaming app-list service. Optional device selects an id or name; otherwise the session selection or sole available device is used.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -844,6 +974,9 @@
             "additionalProperties": {
               "type": "string"
             }
+          },
+          "fresh": {
+            "type": "boolean"
           }
         }
       }
@@ -1227,7 +1360,7 @@
     },
     {
       "name": "batch_commands",
-      "description": "Do a whole known task in one call: launch the app, tap, fill, scroll, go back and answer alerts, up to 30 steps in order, each {tool, arguments}. Prefer this to separate calls whenever the request already names what to do. Every step is checked before any runs. Steps that tap wait up to five seconds for their target, so a batch can cross screens. The reply ends with the foreground app and the visible text, so no screenshot or second look is needed unless you need pixels. It stops at the first failure and reports the failed step, the closest text on screen and remaining_steps; fix that step and send only those. It also pauses before the steps that follow a tap after which no change was observed (same elements, text, values, state and positions), named in unchanged_step: those steps were written for the screen that tap should produce, and the batch cannot tell whether it did. That is not a failed tap; check screen in the reply, then send remaining_steps, with that tap first only if its effect is missing. stop_on_error=false continues past ordinary errors and such taps. Cancellation, timeout and unknown input always stop it. Nested batches are rejected and approval requirements still apply.",
+      "description": "Do a whole known task in one call: launch the app, tap, fill, scroll, go back and answer alerts, up to 30 steps in order, each {tool, arguments}. Prefer this to separate calls whenever the request already names what to do. Every step is checked before any runs. Steps that tap wait up to five seconds for their target, so a batch can cross screens. The reply ends with the foreground app and the visible text, so no screenshot or second look is needed unless you need pixels. It stops at the first failure and reports the failed step, the closest text on screen and remaining_steps; fix that step and send only those. It also pauses before the steps that follow a tap after which no change was observed (same elements, text, values, state and positions), named in unchanged_step: those steps were written for the screen that tap should produce, and the batch cannot tell whether it did. That is not a failed tap; check screen in the reply, then send remaining_steps, with that tap first only if its effect is missing. A tap followed by another step aimed by coordinates (tap, double_tap, long_press, swipe, drag, scroll or pinch) is not compared, because such a run is written for one screen, so the batch does not pause there. stop_on_error=false continues past ordinary errors and compares no tap. A step with arguments.verify=true is always compared. Cancellation, timeout and unknown input always stop it. Nested batches are rejected and approval requirements still apply.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1260,6 +1393,35 @@
         },
         "required": [
           "commands"
+        ]
+      }
+    },
+    {
+      "name": "run_code",
+      "description": "Run JavaScript on an independent worker to do a multi-step device task in one call, deciding each next step from the results instead of returning to the model between steps. code is an async function body, or an async arrow function, that may read input (your JSON) and must return a JSON-serializable value. Call device tools with await tools.<tool_name>(arguments); each returns the same structured result the tool would, so the code can inspect it, loop, filter, count and choose what to do next. Prefer one run_code for predictable multi-step work, such as scrolling until something appears and then reading it; use a single device tool directly for a one-step action, and return an image and the progress so far to the model when the next decision needs visual judgement rather than forcing a long fixed script. The sandbox exposes only tools, input and console: there is no require, file system, network, process or timer. A tool error throws and the code can catch it and adapt. An action receipt with sent=false or an unknown outcome stops the script and returns the steps already run, the same stop rule batch_commands uses; cancellation and timeout also stop it and cancel the device call in progress. The result reports every tool call with its name, elapsed time and receipt. Default limits are 120 seconds in total and 60 tool calls.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "input": {
+            "type": "object"
+          },
+          "timeout_seconds": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 120
+          },
+          "max_tool_calls": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 60
+          }
+        },
+        "required": [
+          "code"
         ]
       }
     },

@@ -1,0 +1,96 @@
+# The check on a promotion PR (propose-promotion.yml). For a beta: the Gym on the promoted commit,
+# passing when neither scorecard has more failures than the last published beta's (the first beta
+# has nothing to compare with and passes on the scorecards existing). For a stable: the beta has been
+# out for soak_days (.github/channels.json, 3), unless the PR has the soak-override label or the
+# proposal gave a reason. Make "promotion gate / verdict" a required check on main.
+name: promotion gate
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/channels.json']
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+concurrency:
+  group: promotion-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  read:
+    runs-on: ubuntu-latest
+    outputs:
+      channel: ${{ steps.r.outputs.channel }}
+      sha: ${{ steps.r.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: r
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          rec="$(python3 .github/scripts/promotion.py pending)"
+          echo "$rec"
+          echo "channel=$(echo "$rec" | jq -r '.channel // empty')" >> "$GITHUB_OUTPUT"
+          echo "sha=$(echo "$rec" | jq -r '.sha // empty')" >> "$GITHUB_OUTPUT"
+
+  gym:
+    needs: read
+    # A label added or removed does not change the build, so it does not run the Gym again; the
+    # verdict then reads the scorecards of the last run on the same commit.
+    if: needs.read.outputs.channel == 'beta' && github.event.action != 'labeled' && github.event.action != 'unlabeled'
+    uses: ./.github/workflows/ios-gym.yml
+    with:
+      ref: ${{ needs.read.outputs.sha }}
+
+  verdict:
+    needs: [read, gym]
+    if: always() && needs.read.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stable waits after its beta
+        if: needs.read.outputs.channel == 'stable' && !contains(github.event.pull_request.labels.*.name, 'soak-override')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 .github/scripts/promotion.py soak
+      - name: The last beta's scorecards
+        if: needs.read.outputs.channel == 'beta'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mkdir -p base
+          last="$(gh api "repos/$GH_REPO/releases?per_page=100" --jq '[.[] | select(.draft | not) | select(.tag_name | test("^app-[0-9.]+-beta\\.[0-9]+$"))] | sort_by(.published_at) | last | .tag_name // empty')"
+          if [ -n "$last" ]; then gh release download "$last" --dir base --pattern 'gym-scorecard*.txt' || true; fi
+          echo "Baseline: ${last:-none (first beta)}"
+      - name: This build's scorecards
+        if: needs.read.outputs.channel == 'beta'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GYM: ${{ needs.gym.result }}
+        run: |
+          set -euo pipefail
+          mkdir -p new
+          if [ "$GYM" = skipped ]; then
+            # A label event: the newest earlier gate run on this commit that ran the Gym.
+            run="$(gh run list --workflow promotion-gate.yml --commit "$HEAD_SHA" --json databaseId,status --jq '[.[] | select(.status == "completed")] | .[].databaseId' | while read -r id; do
+              gh api "repos/$GH_REPO/actions/runs/$id/artifacts" --jq '.artifacts[].name' | grep -qx gym-scorecard && { echo "$id"; break; }; done)"
+          else
+            run="$GITHUB_RUN_ID"
+          fi
+          [ -n "${run:-}" ] || { echo "::error::no Gym run for $HEAD_SHA yet"; exit 1; }
+          for name in gym-scorecard gym-scorecard-inprocess; do
+            gh run download "$run" --name "$name" --dir "new/$name" || echo "::warning::$name missing in run $run"
+            cp "new/$name/$name.txt" new/ 2>/dev/null || true
+          done
+      - name: The Gym is no worse than the last beta
+        if: needs.read.outputs.channel == 'beta'
+        run: python3 .github/scripts/promotion.py gym base new

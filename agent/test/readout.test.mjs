@@ -18,3 +18,16 @@ test('A learned fixed field reads the new value and refuses missing or ambiguous
   assert.equal(readCurrent(valueReadout, { elements: [{ ...separate.elements[0], value: '' }] }), null);
   assert.equal(readCurrent(valueReadout, { elements: [{ ...separate.elements[0], value: '89%' }] }).details[0].value, '89%');
 });
+
+test('A learned list never reads a hidden row, whether its visible flag is false or 0', () => {
+  const start = { ref: 'e1', role: 'Heading', label: 'Events', visible: 1, enabled: 1 };
+  const row = { ref: 'e2', role: 'StaticText', label: '09:00 Synthetic event' };
+  const end = { ref: 'e3', role: 'Heading', label: 'End', visible: 1, enabled: 1 };
+  const readout = learnReadout({ kind: 'list', start_ref: 'e1', end_ref: 'e3', items: [{ ref: 'e2', field: 'label' }] }, { elements: [start, row, end] });
+  const read = flags => readCurrent(readout, { elements: [start, { ...row, ...flags }, end] });
+  assert.deepEqual(read({}).details, [{ label: 'Events', value: '09:00 Synthetic event' }], 'A row without flags is still read');
+  for (const off of [false, 0]) {
+    assert.equal(read({ visible: off, enabled: 1 }), null, `visible: ${off} must not become a verified answer`);
+    assert.equal(read({ visible: 1, enabled: off }), null, `enabled: ${off} must not become a verified answer`);
+  }
+});

@@ -14,13 +14,15 @@ import { openingSentence, openingFromPrompt } from './opening.mjs';
 import { unlockDevice } from './unlock-device.mjs';
 import { StepDeadline } from './step-deadline.mjs';
 import { checkDeviceTools } from './device-preflight.mjs';
+import { reusableActionObservation, receiptForModel } from './post-action-observation.mjs';
 
 const terminal = new Set(['completed', 'failed', 'stopped']);
 const allowedTools = new Set(['poki_mcp_status', 'get_foreground_app', 'list_apps', 'launch_app', 'take_screenshot', 'observe_device', 'list_elements', 'tap', 'tap_text', 'fill', 'type_text', 'press_key', 'hide_keyboard', 'scroll', 'swipe', 'go_back', 'handle_alert', 'batch_commands']);
 const object = (properties, required) => ({ type: 'object', properties, required, additionalProperties: false });
 const string = { type: 'string' };
 const textResult = text => ({ success: true, contentItems: [{ type: 'inputText', text }] });
-const structuredObservations = new Set(['observe_device', 'list_elements']);
+const structuredObservations = new Set(['observe_device', 'list_elements', 'post_action_observation']);
+const reusableInputTools = new Set(['tap', 'double_tap', 'long_press', 'tap_text', 'swipe', 'drag', 'scroll', 'pinch', 'type_text', 'fill', 'press_key', 'press_button', 'go_back', 'handle_alert']);
 const tracePassive = new Set(['poki_mcp_status', 'list_apps', 'get_foreground_app', 'take_screenshot', 'acquire_device', 'renew_device', 'release_device']);
 const observations = new Set(['take_screenshot', 'observe_device', 'list_elements', 'get_foreground_app', 'list_apps', 'poki_mcp_status']);
 
@@ -47,23 +49,28 @@ function modelContent(content) {
   });
 }
 
-function batchTrace(args, result) {
+function batchSteps(args, blocks) {
   const steps = [];
-  let current, summary;
-  for (const block of result.content) {
+  for (const block of blocks) {
     const value = resultData({ content: [block] });
     if (Number.isInteger(value?.step) && typeof value.tool === 'string' && typeof value.isError === 'boolean') {
       const command = args.commands[value.step - 1];
-      if (value.step !== steps.length + 1 || command?.tool !== value.tool) return null;
-      current = { tool: value.tool, args: command.arguments ?? {}, content: [], error: value.isError, elapsedMilliseconds: value.elapsed_ms };
-      steps.push(current);
-    } else if (Number.isInteger(value?.completed_steps)) {
-      summary = value;
-      current = null;
-    } else if (current) current.content.push(block);
+      if (value.step !== steps.length + 1 || command?.tool !== value.tool) return [];
+      steps.push({ tool: value.tool, args: command.arguments ?? {}, content: [], error: value.isError, elapsedMilliseconds: value.elapsed_ms });
+    } else steps.at(-1)?.content.push(block);
   }
-  if (!summary || summary.stop_reason !== null || summary.completed_steps !== args.commands.length || steps.length !== args.commands.length) return null;
   return steps.map(({ content, ...step }) => ({ ...step, result: resultData({ content }) ?? resultText({ content }), at: new Date().toISOString() }));
+}
+
+// Each step that ran is traced as if called alone. A batch that did not finish cleanly also gets its own
+// entry, so the trace keeps the failure, the steps that did not run and the screen the batch ended on.
+function batchTrace(args, result, elapsed) {
+  const summary = resultData({ content: result.content.slice(-1) });
+  if (!Number.isInteger(summary?.completed_steps)) return null;
+  let steps = batchSteps(args, result.content.slice(0, -1));
+  if (steps.length !== summary.completed_steps) steps = [];
+  if (!result.isError && steps.length === args.commands.length) return steps;
+  return [...steps, { tool: 'batch_commands', args, result: summary, error: !!result.isError, elapsedMilliseconds: elapsed, at: new Date().toISOString() }];
 }
 
 export class PhoneTask extends EventEmitter {
@@ -143,10 +150,6 @@ export class PhoneTask extends EventEmitter {
         this.initialForeground = resultData(foreground);
       } catch (error) { this.#restoreWarning(error); }
       if (this.finished) return;
-      const modelStarted = performance.now();
-      await this.codex.open();
-      if (this.finished) { this.codex.close(); return; }
-      this.snapshot.metrics.modelSetupMilliseconds = performance.now() - modelStarted;
       let route = this.options.images?.length ? null : await this.routes.find(this.snapshot.prompt, this.snapshot.context);
       if (route) {
         await this.#announce(this.routes.render(route.opening, route.plan.texts));
@@ -154,7 +157,6 @@ export class PhoneTask extends EventEmitter {
         this.snapshot.execution = { mode: 'route', routeId: route.id, learned: null };
         this.publish({ phase: 'running', title: 'Running learned steps', planTitle: this.routes.render(route.planTitle, route.plan.texts), plan: route.plan.steps.map((_, index) => `Step ${index + 1}`), currentStep: 1 });
         if (this.finished) return;
-        await this.#tool('launch_app', { bundle_id: this.bundleId });
         const choices = [route, ...(route.alternatives ?? [])];
         const outcome = await runFast({ releaseLease: false, task: { ...route.plan, device: this.device, bundle_id: this.bundleId, goal: this.snapshot.prompt, launch_for_scope: true }, signal: this.abort.signal,
           alternatives: choices.slice(1).map(choice => ({ ...choice.plan, device: this.device, bundle_id: this.bundleId, goal: this.snapshot.prompt })),
@@ -168,6 +170,7 @@ export class PhoneTask extends EventEmitter {
             if (this.snapshot.conversation.some(entry => entry.state === 'queued') && name !== 'release_device') throw new Error('task_changed');
             const result = await this.#call(name, args);
             this.#record(name, args, result);
+            if (name === 'launch_app' && !result.isError) this.#noteTarget(result, args);
             if (name === 'observe_device') this.observedAfterAction = !result.isError;
             this.publish();
             return result;
@@ -198,9 +201,16 @@ export class PhoneTask extends EventEmitter {
         outcome.handoff_reason ??= 'result_unverified';
         this.snapshot.execution.mode = 'recovery';
         this.snapshot.execution.recovery = { reason: outcome.handoff_reason, checkpoint: outcome.checkpoint };
-        this.recovery = `Route stopped: ${outcome.handoff_reason}. Completed actions: ${outcome.checkpoint.completed_action_ids.join(', ')}. Do not relaunch the app or replay completed actions. Observe the current screen and continue. Last action outcome: ${outcome.checkpoint.action_outcome}. Observe before deciding.`;
+        const returned = outcome.stats?.return_count ? ` Before it stopped, the route went back ${outcome.stats.return_count} screen${outcome.stats.return_count === 1 ? '' : 's'} looking for its start page.` : '';
+        this.recovery = `Route stopped: ${outcome.handoff_reason}.${returned} Completed actions: ${outcome.checkpoint.completed_action_ids.join(', ')}. Do not relaunch the app or replay completed actions. Observe the current screen and continue. Last action outcome: ${outcome.checkpoint.action_outcome}. Observe before deciding.`;
         this.publish({ title: 'Page changed. Continuing from the current screen.' });
       }
+      const modelStarted = performance.now();
+      // A learned route can hand off on a Mac with no model access; say so now instead of at the step deadline.
+      try { await this.codex.open(); }
+      catch (error) { this.fail(Object.assign(error, { code: 'model_setup' })); return; }
+      if (this.finished) { this.codex.close(); return; }
+      this.snapshot.metrics.modelSetupMilliseconds = performance.now() - modelStarted;
       await this.#startModel(definitions);
     } catch (error) {
       if (error.code === 'device_setup') this.fail(error);
@@ -300,7 +310,7 @@ export class PhoneTask extends EventEmitter {
       this.snapshot.execution.verification = await verifyResult({
         prompt: [this.snapshot.prompt, this.snapshot.context].filter(Boolean).join('\n\n'), success, summary: this.finishClaim.summary, details: this.finishClaim.details, answer: this.finishClaim.answer,
         trace: this.trace, finalObservation: this.completionEvidence,
-        interactions: [],
+        interactions: this.snapshot.conversation.filter(entry => entry.role === 'user' && entry.state === 'taken' && entry !== this.snapshot.conversation[0]).map(({ at, text }) => ({ at, text })),
         modelConfig: this.modelConfig, signal: this.abort.signal,
         onWarning: warning => this.emit('warning', warning),
         onRequest: request => this.snapshot.metrics.requests.push({ ...request, purpose: 'verification' }),
@@ -416,12 +426,16 @@ export class PhoneTask extends EventEmitter {
     if (this.observedAfterAction && ['batch_commands', 'take_screenshot', 'observe_device', 'list_elements'].includes(name)) this.completionEvidence = result.content;
     this.#record(name, args, result);
     if (!observing && !result.isError) {
-      const observed = await this.#completeObservation();
+      const observed = await this.#completeObservation(result);
       if (observed) {
         result = { ...result, content: [...result.content, ...observed.content] };
         if (!observed.isError) { this.observedAfterAction = true; this.completionEvidence = observed.content; }
       }
     }
+    // Record the unabridged action evidence before changing model-facing text.
+    // An eligible reuse adds one top-level trimmed observation; the action's
+    // nested copy must not be sent to the model again.
+    if (!observing) result = { ...result, content: receiptForModel(result.content) };
     this.publish();
     return {
       success: !result.isError,
@@ -429,9 +443,18 @@ export class PhoneTask extends EventEmitter {
     };
   }
 
-  async #completeObservation() {
+  async #completeObservation(actionResult) {
     const last = this.trace.findLast(entry => !tracePassive.has(entry.tool));
     if (!last || structuredObservations.has(last.tool)) return;
+    const receipt = actionResult && resultData(actionResult);
+    const reused = reusableActionObservation(receipt, this.device, this.targetBundle ?? null);
+    if (reused) {
+      // Reused receipt evidence is not a new MCP call.
+      this.trace.push({ tool: 'post_action_observation', args: { source: 'action_receipt', receipt_id: receipt.receipt_id },
+        result: reused, error: false, reused: true, elapsedMilliseconds: 0, at: new Date().toISOString() });
+      this.#mark({ kind: 'observation_reused', source: 'action_receipt', observationId: reused.observation.id });
+      return { content: [{ type: 'text', text: JSON.stringify(reused) }] };
+    }
     const args = { device: this.device };
     const result = await this.#call('list_elements', args);
     this.#record('list_elements', args, result);
@@ -480,8 +503,8 @@ export class PhoneTask extends EventEmitter {
     if (!observations.has(name) && !tracePassive.has(name)) {
       this.actionSincePage = !result.isError && value?.sent !== false ? { tool: name, arguments: args } : null;
     }
-    const steps = name === 'batch_commands' && !result.isError ? batchTrace(args, result) : null;
-    for (const step of steps ?? []) {
+    const steps = name === 'batch_commands' ? batchTrace(args, result, elapsed) : null;
+    if (!result.isError) for (const step of steps ?? []) {
       if (!step.error && ['scroll', 'swipe'].includes(step.tool)) this.deadline.observe(step.result, { tool: step.tool });
     }
     if (this.deadline.observe(result, !result.isError && this.actionSincePage)) this.actionSincePage = null;
@@ -501,7 +524,8 @@ export class PhoneTask extends EventEmitter {
       if (tool === 'list_apps') throw new Error('Call list_apps separately with a specific query.');
       return { tool, arguments: this.#validate(tool, command.arguments ?? {}) };
     }), stop_on_error: true };
-    return name === 'poki_mcp_status' ? {} : { ...args, device: this.device };
+    return name === 'poki_mcp_status' ? {} : { ...args, device: this.device,
+      ...(reusableInputTools.has(name) ? { return_observation: true } : {}) };
   }
 
   #say(role, text, state = null) {

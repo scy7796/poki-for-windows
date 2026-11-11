@@ -28,8 +28,14 @@ export async function runMessageWorker(channel, Source) {
   let config;
   try { config = JSON.parse(await readFile(values.config, 'utf8')); }
   catch { throw new Error('Cannot read the channel configuration as JSON.'); }
-  const fields = ['sender', 'chatGuid', 'allowedUsers', 'device', 'model', 'auth', 'serviceTier', 'context'];
+  const fields = ['sender', 'chatGuid', 'allowedUsers', 'device', 'model', 'auth', 'serviceTier', 'context', 'photos'];
   if (!config || typeof config !== 'object' || Array.isArray(config) || Object.keys(config).some(key => !fields.includes(key))) throw new Error('Unsupported channel configuration. Keep credentials in environment variables.');
+  // A string "true" would otherwise read as off without saying so, and iMessage has no photo path
+  // at all: both are configuration mistakes, not preferences.
+  if ('photos' in config) {
+    if (channel !== 'telegram') throw new Error('photos is a Telegram setting; the iMessage channel sends no screenshots.');
+    if (typeof config.photos !== 'boolean') throw new Error('Set photos to true or false.');
+  }
   if (typeof config.device !== 'string' || !config.device.trim()) throw new Error('Configure one device before starting.');
   if (!values.check) { modelConfig(config); await checkDeviceTools(); }
   const stateDirectory = resolve(values.state ?? `agent/.runtime/${channel}`);

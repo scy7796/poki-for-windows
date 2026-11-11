@@ -17,7 +17,11 @@ export class PokiClient {
 
   call(name, args = {}) {
     if (process.connected && name !== 'poki_mcp_status') process.send({ type: 'poki-device-call', name });
-    return this.client.callTool({ name, arguments: args }, { timeout: 30000 });
+    // Just above the daemon's own 120 s remote cap, so a slow link fails there with a real report
+    // instead of being cut off here with a bare "Request timed out".
+    const configured = Number(process.env.POKI_MCP_CALL_TIMEOUT_MS);
+    const timeout = Number.isFinite(configured) && configured > 0 ? configured : 130000;
+    return this.client.callTool({ name, arguments: args }, { timeout });
   }
 
   async close() { await this.client?.close(); }

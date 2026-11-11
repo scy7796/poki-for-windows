@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/JosssphZhou/poki/security/advisories/new
+    about: Report privately. Do not open a public issue.
+  - name: Installation troubleshooting
+    url: https://github.com/JosssphZhou/poki/blob/main/docs/install.md#fix-common-problems
+    about: Check common setup problems before filing a bug.
+  - name: Filing from an AI agent (Claude Code, Codex, ...)
+    url: https://github.com/JosssphZhou/poki/blob/main/AGENTS.md#file-an-issue
+    about: Agents must follow these instructions so the issue matches a form.

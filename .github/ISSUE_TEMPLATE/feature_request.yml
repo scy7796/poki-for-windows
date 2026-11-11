@@ -1,7 +1,10 @@
 name: Feature request
-description: Ask for a task or capability Poki does not handle yet.
+description: Ask for a task or capability Poki does not handle yet, or propose a design change.
 labels: [enhancement]
 body:
+  - type: markdown
+    attributes:
+      value: Open an issue before a large pull request. Agents filing for a user read [AGENTS.md](https://github.com/JosssphZhou/poki/blob/main/AGENTS.md#file-an-issue).
   - type: textarea
     id: task
     attributes:
@@ -13,6 +16,24 @@ body:
     id: today
     attributes:
       label: What happens today
-      description: How Poki handles the task now, or where it stops.
+      description: How Poki handles the task now, or where it stops. Include measurements if this is about speed.
     validations:
       required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Poki MCP
+        - Poki Agent
+        - iMessage or Telegram channel
+        - Poki iPhone app or Poki Setup
+        - Connection (USB, LAN, Tailscale, relay)
+        - Docs
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: Optional. How it could work, and whether you plan to open a pull request.

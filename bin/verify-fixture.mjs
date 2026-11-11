@@ -72,6 +72,8 @@ try {
   await call('handle_alert', { action: 'accept' }); await awaitText('Alert accepted');
   await call('tap_text', { text: 'Open Detail' }); await awaitText('Detail');
   await call('go_back'); await awaitText('Poki MCP Test');
+  // Returning to the text field can bring its keyboard back over the lower controls.
+  await call('hide_keyboard');
   const slider = (await find('test-slider')).frame;
   await call('drag', { from_x: slider.x + 16, from_y: slider.y + slider.height/2, to_x: slider.x + slider.width-18, to_y: slider.y + slider.height/2, hold_seconds: 0, duration_ms: 500 });
   const sliderValue = (await find('counter')).label;

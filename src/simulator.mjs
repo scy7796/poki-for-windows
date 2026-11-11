@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { root } from './config.mjs';
 import { selectKeyboard, sendInput } from './simulator-input.mjs';
 
+const strokeGapMs = 80;
 const orientations = new Map();
 const screens = new Map();
 const roles = ['Unknown', 'Application', 'Button', 'CheckBox', 'GenericElement', 'Group', 'Heading', 'Image', 'Link', 'RadioButton', 'ScrollArea', 'ScrollBar', 'TabGroup', 'Slider', 'StaticText', 'TextField', 'WebArea', 'TextArea', 'Splitter', 'PopUpButton', 'Sheet', 'Grid'];
@@ -139,6 +140,14 @@ export async function simulatorRequest(id, request) {
       events.push(touch(from, 0), { delay_ms: request.hold_ms ?? 0 });
       for (let step = 1; step <= steps; step++) events.push({ delay_ms: duration / steps }, touch({ x: from.x + (to.x - from.x) * step / steps, y: from.y + (to.y - from.y) * step / steps }, 1));
       events.push({ delay_ms: request.end_hold_ms ?? 0 }, touch(to, 2));
+    } else if (op === 'draw_strokes') {
+      // The helper lifts a touch that is still down when its batch ends, so each stroke is one batch.
+      const batches = request.strokes.map((points, stroke) => [
+        ...points.map((p, index) => ({ ...touch(point(p.x, p.y), index ? 1 : 0), ...(index ? { delay_ms: p.time_ms - points[index - 1].time_ms } : stroke ? { delay_ms: strokeGapMs } : {}) })),
+        touch(point(points.at(-1).x, points.at(-1).y), 2),
+      ]);
+      for (const events of batches) await invoke(id, { op: 'hid', events });
+      return { sent: true, screen_change_verified: false, strokes: batches.length };
     } else if (op === 'pinch') {
       const duration = request.duration_ms ?? 500;
       const steps = Math.min(2000, Math.max(2, Math.ceil(duration / 16)));

@@ -1,0 +1,152 @@
+# Builds the on-phone pieces for iOS: PokiLauncher as an xcframework (Rust static library plus its C
+# header) and PokiCore checked for iOS. Linux tests run too, so a red build means something real.
+name: ios-core
+
+on:
+  # Manual only (Actions > Run workflow), so nothing runs on every push in this repository.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-core-${{ github.ref }}
+  # A run in progress finishes (the simulator job takes ~15 min and pushes come often); a newer push
+  # replaces only the run still waiting.
+  cancel-in-progress: false
+
+jobs:
+  launcher:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch idevice and apply Poki's patches
+        run: native/launcher/fetch-idevice.sh
+      - name: Rust targets
+        run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            build/launcher-target
+          key: launcher-${{ hashFiles('native/launcher/Cargo.lock', 'native/patches/*.patch') }}
+      - name: Tests (macOS host)
+        run: |
+          # The soak's peers listen on 127.0.0.2-4; macOS only answers on 127.0.0.1 until aliased.
+          for n in 2 3 4; do sudo ifconfig lo0 alias "127.0.0.$n" up; done
+          cargo test --release --manifest-path native/launcher/Cargo.toml --target-dir build/launcher-target
+      - name: Build for iPhone and the simulator
+        run: |
+          for target in aarch64-apple-ios aarch64-apple-ios-sim; do
+            cargo build --release --manifest-path native/launcher/Cargo.toml --target-dir build/launcher-target --target "$target"
+          done
+      - name: xcframework
+        run: |
+          mkdir -p build/headers
+          cp native/launcher/include/poki_launcher.h build/headers/
+          cat > build/headers/module.modulemap <<'MAP'
+          module PokiLauncher {
+              header "poki_launcher.h"
+              export *
+          }
+          MAP
+          xcodebuild -create-xcframework \
+            -library build/launcher-target/aarch64-apple-ios/release/libpoki_launcher.a -headers build/headers \
+            -library build/launcher-target/aarch64-apple-ios-sim/release/libpoki_launcher.a -headers build/headers \
+            -output build/PokiLauncher.xcframework
+          (cd build && zip -qry PokiLauncher.xcframework.zip PokiLauncher.xcframework)
+          ls -l build/PokiLauncher.xcframework.zip
+          shasum -a 256 build/PokiLauncher.xcframework.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PokiLauncher.xcframework
+          path: build/PokiLauncher.xcframework.zip
+
+  core:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tests (macOS)
+        working-directory: native/ios/PokiCore
+        timeout-minutes: 10
+        run: swift test
+      - name: Build for iOS
+        working-directory: native/ios/PokiCore
+        run: xcodebuild -scheme PokiCore -destination 'generic/platform=iOS' -quiet build
+
+  # look/do against a real WebDriverAgent in the iOS Simulator: real gestures, typing and timings.
+  simulator:
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      WDA_COMMIT: 02cb92f0e93c8b021443bcbb8eeb80932c113220
+    steps:
+      - uses: actions/checkout@v4
+      - name: WebDriverAgent (the runner's pinned version)
+        run: |
+          git init -q build/wda
+          git -C build/wda fetch -q --depth 1 https://github.com/appium/WebDriverAgent "$WDA_COMMIT"
+          git -C build/wda checkout -q FETCH_HEAD
+      - name: Boot a simulator
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)['devices']
+          # A runtime the selected Xcode can test on: its own SDK's, else the newest not above it.
+          # (A newer runtime installed beside an older Xcode builds, but its test run never starts.)
+          sdk = tuple(int(v) for v in sys.argv[1].split('.'))
+          def version(r): return tuple(int(v) for v in r.rsplit('iOS-', 1)[1].split('-'))
+          runtimes = sorted((r for r in d if 'iOS-' in r and version(r) <= sdk), key=version, reverse=True)
+          phones = [x for r in runtimes for x in d[r] if x['name'].startswith('iPhone')]
+          pro = [x for x in phones if 'Pro' in x['name'] and 'Max' not in x['name']]
+          print((pro or phones)[0]['udid'])" "$(xcrun --sdk iphonesimulator --show-sdk-version)")
+          echo "UDID=$UDID" >> "$GITHUB_ENV"
+          # A phone in use has long dismissed the keyboard's slide-to-type introduction. On a fresh
+          # simulator it loops an animation over the keyboard and WDA's tree reads time out while it
+          # shows (Poki stays answerable: accessibilityDeadline, the text-from-picture fallback), so it
+          # is set as shown before the first boot, as on a used phone.
+          prefs="$HOME/Library/Developer/CoreSimulator/Devices/$UDID/data/Library/Preferences"
+          mkdir -p "$prefs"
+          for domain in com.apple.Preferences com.apple.keyboard.preferences; do
+            defaults write "$prefs/$domain" DidShowContinuousPathIntroduction -bool true
+            defaults write "$prefs/$domain" KeyboardContinuousPathEnabled -bool false
+          done
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl list devices | grep "$UDID"
+      - name: Build WebDriverAgent for the simulator
+        run: xcodebuild -project build/wda/WebDriverAgent.xcodeproj -scheme WebDriverAgentRunner -destination "id=$UDID" -derivedDataPath build/wda-dd build-for-testing -quiet
+      - name: Start WebDriverAgent
+        run: |
+          nohup xcodebuild -project build/wda/WebDriverAgent.xcodeproj -scheme WebDriverAgentRunner -destination "id=$UDID" -derivedDataPath build/wda-dd test-without-building > build/wda.log 2>&1 &
+          for i in $(seq 1 150); do grep -q '\*\* TEST.*FAILED\|Testing failed' build/wda.log && break; curl -sf http://127.0.0.1:8100/status > /dev/null && echo "up after $((i * 2)) s" && exit 0; sleep 2; done
+          tail -50 build/wda.log; exit 1
+      - name: look/do in Settings (XML tree, the default)
+        working-directory: native/ios/PokiCore
+        run: |
+          set -o pipefail
+          POKI_PICTURES=../../../build/pictures swift run -c release poki-sim-check 2>&1 | tee ../../../build/sim-check.txt
+      - name: look/do in Settings (JSON tree, for comparison)
+        if: always()
+        working-directory: native/ios/PokiCore
+        run: |
+          set -o pipefail
+          POKI_TREE_FORMAT=json POKI_PICTURES=../../../build/pictures-json swift run -c release poki-sim-check 2>&1 | tee ../../../build/sim-check-json.txt
+      - name: Summary
+        if: always()
+        run: |
+          tail -40 build/wda.log 2>/dev/null || true
+          ls ~/Library/Logs/DiagnosticReports 2>/dev/null | grep -i poki | while read f; do head -60 ~/Library/Logs/DiagnosticReports/"$f"; done || true
+          { echo '## look/do on the simulator (XML tree, the default)'; echo; sed -n '/^| call/,$p' build/sim-check.txt 2>/dev/null; echo; echo '## look/do on the simulator (JSON tree, for comparison)'; echo; sed -n '/^| call/,$p' build/sim-check-json.txt 2>/dev/null; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sim-check
+          path: |
+            build/sim-check.txt
+            build/sim-check-json.txt
+            build/wda.log
+            build/pictures
+            build/pictures-json

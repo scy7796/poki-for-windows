@@ -126,6 +126,15 @@ test('cancel interrupts the human dialog process and never executes the approved
 });
 
 
+test('list_devices sends the user to Finder when usbmuxd answers with no device',async t=>{
+ const f=await fixture(t);await f.set({simulatorOnly:true,simulatorBooted:true});
+ const listed=value(await f.call('list_devices'));
+ assert.deepEqual(listed.devices.map(d=>d.id),['fixture-sim']);
+ assert.match(listed.notice,/Finder sidebar/);assert.match(listed.notice,/devicectl reaches only over the network/);
+ await f.set({simulatorOnly:false});
+ assert.equal(value(await f.call('list_devices')).notice,undefined);
+});
+
 test('an occupied simulator cannot be booted through explicit, selected or batch paths',{skip:needsSimulator},async t=>{
  const f=await fixture(t);await f.set({simulatorOnly:true});
  assert.ok(value(await f.call('acquire_device',{device:'fixture-sim'})).lease_id);
@@ -208,10 +217,30 @@ test('renewal and rejected management calls preserve SDK cancellation identity',
  }
 });
 
+test('an English query taps a mixed Chinese and English label',async t=>{
+ const f=await fixture(t);await f.set({label:'Sign in 登录',afterInput:{label:'Signed in'}});
+ const result=await f.call('tap_text',{text:'Sign in'});
+ assert.notEqual(result.isError,true,JSON.stringify(result));
+ assert.ok((await f.events()).some(event=>event.op==='tap'),'the matching target must receive the tap');
+ assert.match(JSON.stringify(result),/Signed in/);
+});
+
+test('a failed text search keeps the foreground accessibility reported when OCR has no answer',async t=>{
+ // The physical-device fixture reports a foreground when bundleId is set. An empty elements
+ // array empties the accessibility read, and OCR then answers with no text and no foreground.
+ const f=await fixture(t);await f.set({elements:[],bundleId:'local.fixture',ocrLabel:''});
+ const result=await f.call('tap_text',{text:'Absent'});
+ assert.equal(result.isError,true);
+ assert.match(result.content[0].text,/foreground: local\.fixture/);
+ assert.doesNotMatch(result.content[0].text,/foreground: unknown/);
+});
+
 test('recognized prompts report their type without forcing a human handoff',async t=>{
  for(const [tool,args,label,kind] of [
   ['handle_alert',{action:'accept'},'Allow Paste','paste'],
   ['handle_alert',{button:'允许粘贴'},'允许粘贴','paste'],
+  // A recognizer can space out what it reads; the button text a caller writes is never spaced.
+  ['handle_alert',{button:'允许粘贴'},'允 许 粘 贴','paste'],
   ['handle_alert',{action:'dismiss'},"Don't Allow Paste",'paste'],
   ['take_screenshot',{},'Enter iPhone Passcode','passcode'],
   ['observe_device',{},'Apple Account Password','apple_account'],
@@ -220,6 +249,7 @@ test('recognized prompts report their type without forcing a human handoff',asyn
   ['list_elements',{},'Face ID','face_id'],
   ['list_elements',{},'触控 ID','touch_id'],
   ['list_elements',{},'Touch ID','touch_id'],
+  ['list_elements',{},'Touch ID for “微信”','touch_id'],
   ['list_elements',{},'“VPN”想添加 VPN 配置','vpn'],
   ['list_elements',{},'「VPN」想要加入 VPN 設定','vpn'],
   ['list_elements',{},'安装描述文件','profile'],
@@ -358,8 +388,10 @@ test('launch reconnects a stalled foreground observation without relaunching the
  assert.notEqual(result.isError,true,result.content[0].text);
  assert.equal(value(result).foreground_verified,true);
  const events=await f.events();assert.equal(events.filter(e=>e.op==='launch_app').length,1);
- const processes=events.filter(e=>e.tool==='poki-native');
- for(const process of processes)assert.ok(await processGone(process.pid),'every native helper should have ended');
+ const processes=events.filter(e=>e.tool==='poki-native'),helpers=processes.filter(e=>e.args[0]==='--local-server'),current=helpers.at(-1).pid;
+ assert.notEqual(helpers[0].pid,current);assert.ok(await processGone(helpers[0].pid),'the first native helper should have ended');
+ // ESP-80 keeps the current local helper running by design; the abandoned read and the first helper that ran it must still exit.
+ for(const process of processes.filter(p=>p.pid!==current))assert.ok(await processGone(process.pid),'every other native helper should have ended');
  await f.set({axHangs:10});const start=events.length,controller=new AbortController();
  const pending=f.a.callTool({name:'launch_app',arguments:{bundle_id:'com.apple.Preferences'}},{signal:controller.signal});
  const rejected=assert.rejects(pending);
@@ -568,6 +600,13 @@ test('launch_app on a simulator waits for a readable interface and reports when 
  await f.set({simulatorOnly:true,simulatorBooted:true,axEmptyReads:100000});
  const blank=await f.call('launch_app',{bundle_id:'local.fixture'});
  assert.notEqual(blank.isError,true);assert.equal(value(blank).interface_ready,false);
+});
+
+// A route replay opens its app and goes on only when the receipt says the app is in front, as a phone's does.
+test('launch_app on a simulator says the launched app is in front',{skip:needsSimulator},async t=>{
+ const f=await fixture(t);await f.set({simulatorOnly:true,simulatorBooted:true,label:'Ready'});
+ const launched=value(await f.call('launch_app',{bundle_id:'local.fixture'}));
+ assert.equal(launched.pid,4242);assert.equal(launched.foreground_verified,true);
 });
 
 test('fill enters plain text exactly when the simulator keyboard is an input method',{skip:needsSimulator},async t=>{
@@ -792,14 +831,6 @@ test('a recognition that began inside the five seconds still finishes and is use
  assert.ok(elapsed>=5500,'the recognition was not allowed to finish: '+elapsed+'ms');
  assert.ok(elapsed<18000,'the search outlasted its window: '+elapsed+'ms');
  assert.equal(inputSent(await f.events()),true);
-});
-
-test('a failed text search keeps the foreground accessibility reported when OCR has no answer',async t=>{
- const f=await fixture(t);await f.set({elements:[],launched:true,ocrLabel:'',ocrDelayMs:6000});
- const result=await f.call('tap_text',{text:'Absent'});
- assert.equal(result.isError,true);
- assert.match(result.content[0].text,/foreground: local\.fixture/);
- assert.doesNotMatch(result.content[0].text,/foreground: unknown/);
 });
 
 test('no new look starts after the five seconds, so a late empty read never reaches OCR',async t=>{

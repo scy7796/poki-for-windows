@@ -30,7 +30,7 @@ class TelegramError extends Error {
 }
 
 export class TelegramSource {
-  constructor({ allowedUsers, stateDirectory }) {
+  constructor({ allowedUsers, stateDirectory, photos = false }) {
     if (!Array.isArray(allowedUsers) || !allowedUsers.length || allowedUsers.some(id =>
       !/^\d+$/.test(String(id)) || !Number.isSafeInteger(Number(id)) || Number(id) <= 0)) {
       throw new Error('Configure allowedUsers as a nonempty list of numeric Telegram user IDs.');
@@ -44,6 +44,8 @@ export class TelegramSource {
       throw new Error('TELEGRAM_API_URL must be the official Bot API or a loopback HTTP development server.');
     }
     this.state = new ChannelCursor(stateDirectory, 'telegram', `${this.url.origin}/${this.token.split(':')[0]}`);
+    // Off unless asked for: a photo uploads the phone's screen into a chat on every task.
+    this.photos = photos === true;
   }
 
   async request(method, body = {}, signal) {
@@ -118,14 +120,64 @@ export class TelegramSource {
 
   acknowledge(id) { return this.state.save(id + 1); }
 
+  async photo(chat, image, caption) {
+    const bytes = Buffer.from(image.data, 'base64');
+    const type = image.mimeType || 'image/png';
+    const form = new FormData();
+    form.append('chat_id', String(chat));
+    if (caption) form.append('caption', caption);
+    form.append('photo', new Blob([bytes], { type }), type.includes('png') ? 'screen.png' : 'screen.jpg');
+    let response;
+    try {
+      response = await fetch(new URL(`/bot${this.token}/sendPhoto`, this.url), {
+        method: 'POST', body: form, redirect: 'error', signal: AbortSignal.timeout(60000),
+      });
+    } catch (error) {
+      // No response, so no way to tell whether Telegram accepted the body: the request may have
+      // been read and the reply lost. Nothing here may be resent.
+      throw new TelegramError('network', 'photo upload failed; delivery may be uncertain');
+    }
+    const result = await response.json().catch(() => null);
+    // A rejection is a body that says `ok: false`, or a 4xx that should have carried one - a proxy
+    // answering 413 for a photo that is too large. A 5xx whose body could not be read is not: a 504
+    // from Telegram's gateway can arrive after the photo was accepted, and sending the text as well
+    // would show the reply twice.
+    if (result?.ok === false || (!result && response.status >= 400 && response.status < 500)) {
+      throw new TelegramError(result?.error_code ?? response.status, 'photo rejected');
+    }
+    if (result?.ok !== true || !Number.isSafeInteger(result.result?.message_id)) {
+      throw new TelegramError(response.status, 'photo upload returned no confirmation; delivery may be uncertain');
+    }
+    return result.result.message_id;
+  }
+
   replyTo(message) {
     const chat = message.conversation;
     if (!this.allowedUsers.has(chat)) throw new Error('Telegram recipient is not configured.');
     let progress;
     return {
       acknowledge: id => this.acknowledge(id),
-      send: async (text, { kind = 'notice', taskId } = {}) => {
+      send: async (text, { kind = 'notice', taskId, image } = {}) => {
         if (!text.trim()) return;
+        // One upload attempt per reply, at most: after a timeout there is no way to tell whether
+        // the photo arrived, and a second try hands the user the same screenshot twice.
+        let photoAttempted = false;
+        if (this.photos && image?.data && kind === 'final' && text.length <= 1024) {
+          photoAttempted = true;
+          try {
+            await this.photo(chat, image, text);
+            progress = undefined;
+            return;
+          } catch (error) {
+            // Text only after a definite rejection. Anything else may already be in the chat, so
+            // sending the same words again would be the duplicate this fallback exists to avoid.
+            if (error.kind !== 'photo rejected') {
+              console.error('telegram: photo may have arrived, not resending as text:', error.message);
+              return;
+            }
+            console.error('telegram: photo rejected, sending text instead:', error.message);
+          }
+        }
         const chunks = splitMessage(text);
         if (kind === 'progress' && progress?.taskId === taskId && chunks.length === 1) {
           try {
@@ -144,6 +196,10 @@ export class TelegramSource {
         }
         if (kind === 'progress' && chunks.length === 1) progress = { taskId, id: first };
         else progress = undefined;
+        if (this.photos && image?.data && kind === 'final' && !photoAttempted) {
+          try { await this.photo(chat, image, ''); }
+          catch (error) { console.error('telegram: photo delivery failed:', error.message); }
+        }
       },
     };
   }

@@ -9,4 +9,6 @@ export CXXFLAGS="${CXXFLAGS:-} -ffile-prefix-map=$HOME=/builder -ffile-prefix-ma
 xcrun swiftc -target "$(uname -m)-apple-macos15.0" -debug-prefix-map "$project_dir=/poki" native/ocr.swift -o build/ocr
 xcrun clang -ffile-prefix-map="$project_dir=/poki" -fobjc-arc -fblocks -framework Foundation -framework AppKit -framework UniformTypeIdentifiers native/simulator.m -o build/simulator
 cargo build --locked --release --manifest-path native/bridge/Cargo.toml --target-dir build/native-target --bin poki-native --example unlock_iphone -j 4
-cp build/native-target/release/poki-native build/poki-native
+# Overwriting a running executable in place makes macOS kill every later launch of it, so install a new file.
+cp build/native-target/release/poki-native build/poki-native.tmp
+mv -f build/poki-native.tmp build/poki-native

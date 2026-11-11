@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { flagOn } from './element-flags.mjs';
 
 export function screenIdentity(screen) {
   if (screen.prompt || screen.unavailable) return null;
@@ -8,7 +9,7 @@ export function screenIdentity(screen) {
     return split ? { role: split[1], label: split[2].split(' = ')[0] } : { role: 'StaticText', label: text };
   });
   if (elements.some(element => /^(Alert|Dialog|Sheet)$/i.test(element.role ?? element.type ?? ''))) return null;
-  const entries = elements.filter(element => element.visible !== false && element.visible !== 0)
+  const entries = elements.filter(element => flagOn(element.visible))
     .flatMap(element => {
       const role = element.type ?? element.role ?? 'Element';
       if (/^(Key|Keyboard|StatusBar)$/i.test(role)) return [];

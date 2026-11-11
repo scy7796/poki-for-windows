@@ -1,8 +1,10 @@
+import * as cua from './cua.mjs';
 import { readFileSync } from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { version } from './build-info.mjs';
 import { isWin } from './os.mjs';
+import { taskGateDefinitions } from './task-gate.mjs';
 
 // Xcode owns the simulator and the iOS build system. Where it does not exist the
 // catalog does not list the tools it would back, so a listing is a promise the host
@@ -41,26 +43,74 @@ Arguments of common steps: launch_app {bundle_id or name}; tap_text {text}; tap 
   fill: 'Omit field when only one text input is visible. When selecting among fields, copy the exact observed label or use a current ref; field labels are not translated. Prefer fill over separate tap + type_text when the target field is known: it uses the field already being edited or taps it once, confirms that exact field before clearing anything, and reads the text back from it before any Return. When the field cannot be confirmed, nothing is typed. Use submit=true only when sending is already authorized; otherwise inspect the draft first.',
   type_text: 'Requires an already focused field. When the target field is known, use fill instead to avoid focus mistakes. To send text already entered, use press_key key=return; do not call type_text with empty text. text_verified confirms input only, not delivery.',
   press_key: 'Use key=return to submit existing text after it has been checked; do not re-enter the text. A sent result only confirms key dispatch, so verify the app result before reporting delivery.',
-  launch_app: 'On a simulator it returns once the app shows readable elements, with their text in screen, so there is no need to look again or wait. If launch fails with CoreDeviceError 4016, inspect the current screen and use the observed Home Screen or app switcher controls. Avoid repeating the same failing launch until device conditions change.',
+  touch_path: 'For a circle, make one touch_path call that goes once around and runs about 10 degrees past its first point, so the ends meet even when an app ignores the first few points of movement. Measure the center and radius in points from a current screenshot and keep the whole shape inside the drawing area. Give about one point every 10 to 16 ms; a circle drawn over 1500 ms with 120 points looks smooth. Do not build a circle from several drags or a few corner points. Inspect a screenshot afterwards, and do not erase or redraw automatically.',
+  draw_strokes: 'Plan every letter before the call: nothing generates lettering for you. Write cursive or block letters as curves sampled about every 10 to 16 ms, one stroke per pen lift, left to right, sized from a current screenshot of the canvas. Use it only on a canvas that does not scroll or pan when touched; when the canvas or tool must be checked between strokes, use separate touch_path calls. Inspect a screenshot afterwards.',
+  launch_app: 'On a simulator it returns once the app shows readable elements, and on a physical device once the app is in front; either way its text is in screen, so there is no need to look again. resumed=true means the app was already running and kept its state; use fresh=true to start it anew. If launch fails with CoreDeviceError 4016, inspect the current screen and use the observed Home Screen or app switcher controls. Avoid repeating the same failing launch until device conditions change.',
+};
+// JSON Schema cannot say that time_ms increases, so the parsed arguments are checked before any device is touched.
+const checkStroke = (points, ctx, path) => {
+  if (points[0].time_ms !== 0) ctx.addIssue({ code: 'custom', path: [...path, 0, 'time_ms'], message: 'time_ms of the first point must be 0.' });
+  const back = points.findIndex((point, index) => index > 0 && point.time_ms <= points[index - 1].time_ms);
+  if (back > 0) ctx.addIssue({ code: 'custom', path: [...path, back, 'time_ms'], message: `time_ms must increase at every point; point ${back} has ${points[back].time_ms} after ${points[back - 1].time_ms}.` });
+};
+const strokeChecks = {
+  touch_path: (args, ctx) => checkStroke(args.points, ctx, ['points']),
+  draw_strokes: (args, ctx) => {
+    args.strokes.forEach((stroke, index) => checkStroke(stroke.points, ctx, ['strokes', index, 'points']));
+    const total = args.strokes.reduce((sum, stroke) => sum + stroke.points.at(-1).time_ms, 0);
+    if (total > 60000) ctx.addIssue({ code: 'custom', path: ['strokes'], message: `The strokes together must last at most 60000 ms; these last ${total} ms.` });
+  },
+};
+// Additive observation arguments: legacy clients retain their existing schema
+// behavior and the upstream stroke timing refinements are preserved.
+const actionObservationTools = new Set(['tap', 'double_tap', 'long_press', 'tap_text', 'swipe',
+  'drag', 'scroll', 'pinch', 'type_text', 'fill', 'press_key', 'press_button', 'go_back', 'handle_alert']);
+const schemaOf = tool => {
+  const schemaWithObservations = actionObservationTools.has(tool.name)
+    ? { ...tool.inputSchema, properties: { ...tool.inputSchema.properties,
+      return_observation: { type: 'boolean', description: 'Request a ref-bearing post-input observation when available.' },
+      post_action_ocr: { type: 'boolean', description: 'Capture after stable AX and check image OCR prompts (default false).' } } }
+    : tool.name === 'observe_device'
+      ? { ...tool.inputSchema, properties: { ...tool.inputSchema.properties,
+        include_image: { type: 'boolean', description: 'Attach PNG (default true); false retains capture and prompt checks.' } } }
+      : tool.inputSchema;
+  const schema = z.fromJSONSchema(schemaWithObservations);
+  return strokeChecks[tool.name] ? schema.superRefine(strokeChecks[tool.name]) : schema;
 };
 export const definitions = catalog.tools
   .filter(tool => !(isWin && requiresXcode.has(tool.name)))
-  .map(tool => [tool.name, [tool.description, guidance[tool.name]].filter(Boolean).join('\n\n'), z.fromJSONSchema(tool.inputSchema), readOnly.has(tool.name)]);
+  .map(tool => [tool.name, [tool.description, guidance[tool.name]].filter(Boolean).join('\n\n'), schemaOf(tool), readOnly.has(tool.name)]);
 definitions.push(['disconnect_device', 'Close the selected remote device connection and its local helper. Cellular reconnection may require returning the iPhone to Wi-Fi. Does not undo input.', z.object({ device: z.string().optional() }), false]);
 definitions.push(['reconnect_device', 'Re-establish the selected RemotePairing tunnel. Does not replay input. A new session may require Wi-Fi when iOS closes its remote pairing listener.', z.object({ device: z.string().optional() }), false]);
 definitions.push(['poki_mcp_status', 'Report Poki MCP version, current Git commit, native bridge build time, tool count, connected-device count, selected device, approval mode for this session, and any available Poki update with release notes and the update command.', z.object({}), true]);
 
-export function createServer(call) {
-  const server = new McpServer({ name: 'poki-mcp', version }, { instructions });
-  for (const [name, description, inputSchema, readOnlyHint] of definitions) {
+// The computer-use profile (POKI_TOOL_PROFILE=cua, cua.mjs): look and do, plus device and status tools.
+for (const [name, description, schema, readOnlyHint] of cua.definitions) definitions.push([name, description, z.fromJSONSchema(schema), readOnlyHint]);
+const profile = (env = process.env) => env.POKI_TOOL_PROFILE ?? 'default';
+const listedFor = name => (name === 'cua' ? cua.tools : defaultTools);
+
+// `gate` (task-gate.mjs) is optional: when present it adds begin_task/end_task and decides, before the
+// device sees anything, whether each call may run.
+export function createServer(call, { gate } = {}) {
+  const computerUse = profile() === 'cua';
+  const listed = gate ? new Set([...listedFor(profile()), ...taskGateDefinitions.map(([name]) => name)]) : listedFor(profile());
+  const server = new McpServer({ name: 'poki-mcp', version }, { instructions: (computerUse ? cua.instructions : instructions) + (gate ? ' This connection requires per-task approval: call begin_task with a description of the whole task first, and end_task when it is done.' : '') });
+  const all = gate ? [...taskGateDefinitions, ...definitions] : definitions;
+  for (const [name, description, inputSchema, readOnlyHint] of all) {
     server.registerTool(name, { description, inputSchema, annotations: { readOnlyHint } }, async (args, extra) => {
-      try { return await call(name, args, { signal: extra.mcpReq?.signal ?? extra.signal, requestId: extra.mcpReq?._meta?.['poki/request_id'] }); }
+      const signal = extra.mcpReq?.signal ?? extra.signal;
+      try {
+        const verdict = gate && await gate.check(name, args, signal);
+        if (verdict) return verdict;
+        return await call(name, args, { signal, requestId: extra.mcpReq?._meta?.['poki/request_id'] });
+      }
       catch (error) { return { isError: true, content: [{ type: 'text', text: error.message }] }; }
     });
   }
+  gate?.attach(server);
   if (process.env.POKI_MCP_TOOLS !== 'all') {
     server.server.setRequestHandler('tools/list', () => ({
-      tools: definitions.filter(([name]) => defaultTools.has(name)).map(([name, description, inputSchema, readOnlyHint]) => ({
+      tools: all.filter(([name]) => listed.has(name)).map(([name, description, inputSchema, readOnlyHint]) => ({
         name, description, inputSchema: z.toJSONSchema(inputSchema, { io: 'input', target: 'draft-2020-12' }),
         annotations: { readOnlyHint },
       })),

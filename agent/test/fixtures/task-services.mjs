@@ -27,7 +27,7 @@ function respond(res, tool, index, opening, finalText = 'Finished the local fixt
   res.end();
 }
 
-export async function taskServices(directory, { route = false, appSearch = false, pendingModel = false, beforeVerification, beforeFinalResponse, execution, scrollResults = [], beforeDeviceCall, devices = [] } = {}) {
+export async function taskServices(directory, { route = false, appSearch = false, pendingModel = false, beforeVerification, beforeFinalResponse, execution, scrollResults = [], beforeDeviceCall, devices = [], postActionObservation = false } = {}) {
   const fixture = { modelRequests: [], deviceCalls: [], events: [], foreground: { bundle_id: 'org.example.channel-fixture', name: 'Channel fixture' }, value: '', observations: 0 };
   let executionIndex = 0, scrollIndex = 0;
   const model = http.createServer(async (req, res) => {
@@ -104,7 +104,23 @@ export async function taskServices(directory, { route = false, appSearch = false
       else if (name === 'press_key' && args.key === 'home') result = { sent: true };
       else if (name === 'press_button' && args.button === 'home') { fixture.foreground = fixture.homeForeground ?? { bundle_id: 'com.apple.springboard', name: 'SpringBoard' }; result = { sent: true }; }
       else if (route && ['acquire_device', 'renew_device', 'release_device'].includes(name)) result = { lease_id: 'fixture-lease', device: 'synthetic-device', released: true };
-      else if (route && name === 'fill') { fixture.value = args.text; result = { sent: true, screen: { foreground: fixture.foreground.name } }; }
+      else if (route && name === 'fill') {
+        fixture.value = args.text;
+        result = { sent: true, screen: { foreground: fixture.foreground.name } };
+        if (postActionObservation && args.return_observation === true) {
+          const at = offset => new Date(Date.now() + offset).toISOString();
+          result = { ...result, receipt_id: 'fixture-fill-receipt', input_completed_at: at(-350),
+            post_action_observation: { version: 1, action_receipt_id: 'fixture-fill-receipt',
+              observation: { id: 'fixture-after-fill', device: 'synthetic-device', revision: 2, atomic: false,
+                structure_started_at: at(-300), structure_completed_at: at(-200) },
+              source: 'accessibility', foreground: fixture.foreground, truncated: false,
+              prompt: { status: 'checked', source: 'accessibility', warning: null }, total: 2,
+              elements: [
+                { ref: 'e3', identifier: 'fixture-value', label: 'Value', value: fixture.value, role: 'TextField', visible: true },
+                { ref: 'e4', identifier: 'fixture-saved', label: 'Saved: ' + fixture.value, role: 'StaticText', visible: true },
+              ] } };
+        }
+      }
       else if (route && ['list_elements', 'observe_device'].includes(name)) result = {
         source: 'accessibility', truncated: false, foreground: fixture.foreground,
         observation: { id: `observation-${++fixture.observations}`, revision: fixture.observations, device: 'synthetic-device', capture_started_at: new Date().toISOString(), capture_completed_at: new Date().toISOString() },

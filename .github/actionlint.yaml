@@ -1,0 +1,3 @@
+# actionlint (pr-checks.yml): runner labels newer than its built-in list.
+self-hosted-runner:
+  labels: [macos-26]

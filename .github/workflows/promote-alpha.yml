@@ -1,0 +1,102 @@
+# Promote to Alpha: Actions > Promote to Alpha > Run workflow. Takes a pre-alpha (by default the one
+# on app-prealpha-latest), runs the alpha tests on its commit, and when they pass puts that same IPA
+# (not a rebuild) into the rolling app-alpha-latest release (and the old ios-alpha-latest) with the
+# tag app-<VERSION>-alpha.<build>.
+# Testers on the Alpha channel get exactly the file that was tried on Pre-alpha.
+name: Promote to Alpha
+
+on:
+  workflow_dispatch:
+    inputs:
+      prealpha:
+        description: "Pre-alpha tag to promote, like app-0.3.0-prealpha.712 (empty: the one on app-prealpha-latest)"
+        type: string
+        required: false
+        default: ''
+
+concurrency:
+  group: promote-alpha
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.r.outputs.sha }}
+      version: ${{ steps.r.outputs.version }}
+      build: ${{ steps.r.outputs.build }}
+      run: ${{ steps.r.outputs.run }}
+    steps:
+      - id: r
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          WANT: ${{ inputs.prealpha }}
+        run: |
+          set -euo pipefail
+          if [ -z "$WANT" ]; then
+            ipa="$(gh release view app-prealpha-latest --json assets --jq '.assets[].name' | grep -E '^Poki-external-.*\.ipa$' | head -1)"
+            stem="${ipa#Poki-external-}"; stem="${stem%.ipa}"
+            WANT="app-${stem%-*}-prealpha.${stem##*-}"
+          fi
+          [[ "$WANT" =~ ^app-([0-9]+\.[0-9]+\.[0-9]+)-prealpha\.([0-9]+)$ ]] || { echo "::error::$WANT is not app-X.Y.Z-prealpha.N"; exit 1; }
+          version="${BASH_REMATCH[1]}" build="${BASH_REMATCH[2]}"
+          sha="$(gh api "repos/$GH_REPO/commits/$WANT" --jq .sha)"
+          # The pre-alpha run that built this commit; its artifact is the file to promote.
+          run="$(gh run list --workflow prealpha.yml --commit "$sha" --status success --json databaseId --jq '.[0].databaseId')"
+          [ -n "$run" ] || { echo "::error::no successful Pre-alpha run built $sha (artifacts are kept 90 days)"; exit 1; }
+          if gh api "repos/$GH_REPO/git/refs/tags/app-$version-alpha.$build" >/dev/null 2>&1; then
+            echo "::error::app-$version-alpha.$build already exists"; exit 1
+          fi
+          echo "Promoting $WANT ($sha), Pre-alpha run $run"
+          { echo "sha=$sha"; echo "version=$version"; echo "build=$build"; echo "run=$run"; } >> "$GITHUB_OUTPUT"
+          echo "## Promote $WANT to Alpha" >> "$GITHUB_STEP_SUMMARY"
+
+  # The alpha tests on the pre-alpha's commit: PokiCore and loopback tests, the in-process field,
+  # apps and idle-cycle checks, the simulator smoke test, and Poki's agent end to end with a
+  # scripted model. Three macOS jobs.
+  ios-tests:
+    needs: resolve
+    uses: ./.github/workflows/ios-app.yml
+    with:
+      version: ${{ needs.resolve.outputs.version }}
+      build: ${{ needs.resolve.outputs.build }}
+      ref: ${{ needs.resolve.outputs.sha }}
+
+  # Poki Setup's core (release picking, pairing, signing) on Linux.
+  desktop-tests:
+    needs: resolve
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ needs.resolve.outputs.sha }}" }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: desktop }
+      - run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - run: cargo test -p poki-setup-core -p poki-setup-cli --manifest-path desktop/Cargo.toml
+        env: { POKI_SETUP_FILE_SECRETS: "1" }
+
+  publish:
+    needs: [resolve, ios-tests, desktop-tests]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ needs.resolve.outputs.sha }}", fetch-depth: 0, filter: 'tree:0' }
+      # The publishing script from this workflow's commit, so older pre-alphas can be promoted too.
+      - uses: actions/checkout@v4
+        with: { path: pipeline, sparse-checkout: .github/scripts }
+      - name: The pre-alpha's IPA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "${{ needs.resolve.outputs.run }}" --name Poki-unsigned --dir app
+      - name: Publish to app-alpha-latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: pipeline/.github/scripts/publish-rolling.sh alpha "${{ needs.resolve.outputs.version }}" "${{ needs.resolve.outputs.build }}" app app-prealpha-latest

@@ -6,7 +6,7 @@ use idevice::{
 use std::time::Duration;
 
 /// The field a caller found on screen. Lists reuse cells, so an object id alone does not name it.
-#[derive(serde::Deserialize)]
+#[derive(Clone, serde::Deserialize)]
 pub struct Target {
     object_id: String,
     role: String,

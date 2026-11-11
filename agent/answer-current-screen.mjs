@@ -1,4 +1,5 @@
 import { PiSession } from './pi-session.mjs';
+import { flagOn } from '../src/element-flags.mjs';
 
 export async function answerCurrentScreen({ prompt, context = '', observation, modelConfig, signal, onResponse = () => {}, onRequest = () => {}, onWarning = () => {} }) {
   const failed = () => ({ success: false, summary: 'The current screen does not establish all requested results. No saved answer was reused.', details: [] });
@@ -23,7 +24,7 @@ export async function answerCurrentScreen({ prompt, context = '', observation, m
       const selected = new Set();
       const details = selection.items.map(item => {
         if (!['label', 'value'].includes(item.field)) throw new Error('Unsupported screen field');
-        const matches = observation.elements.filter(element => element.ref === item.ref && element.visible !== false);
+        const matches = observation.elements.filter(element => element.ref === item.ref && flagOn(element.visible));
         if (matches.length !== 1) throw new Error('Unknown or ambiguous screen reference');
         const element = matches[0], value = element[item.field], key = `${item.ref}:${item.field}`;
         if (typeof value !== 'string' || !value.trim() || selected.has(key)) throw new Error('Missing or repeated screen value');

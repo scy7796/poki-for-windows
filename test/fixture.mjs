@@ -18,7 +18,7 @@ const phoneTop=(s,r)=>s.phone.keyboard?r.up:r.down;
 const phoneRowAt=(s,hidY)=>{const y=hidY/65535*199;return s.phone.rows.find(r=>y>=phoneTop(s,r)&&y<=phoneTop(s,r)+20);};
 const phoneTap=(s,hidY)=>{const hit=s.phone.tapLandsOn?s.phone.rows.find(r=>r.id===s.phone.tapLandsOn):phoneRowAt(s,hidY);if(!hit||s.phone.tapsIgnored)return;for(const r of s.phone.rows)r.editing=r===hit;s.phone.keyboard=true;};
 const readList=(s,file)=>{if(s.list?.slideReads)file(JSON.stringify({...s,list:{...s.list,slideReads:s.list.slideReads-1}}));};
-import { readFileSync, writeFileSync, appendFileSync, copyFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, copyFileSync, mkdirSync, renameSync } from 'node:fs';
 import { basename } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
@@ -28,9 +28,33 @@ let tool=basename(process.argv[1]).replace(/\.(?:mjs|js)$/,'');
 if(tool==='python'&&String(args[0]??'').endsWith('ocr_win.py'))tool='ocr';
 // The Windows build of the device tools carries the Cargo package name.
 if(tool==='idevice-tools')tool='idevice';
+const writeState=text=>{const temporary=process.env.FIXTURE_STATE+'.'+process.pid+'.tmp';writeFileSync(temporary,text);renameSync(temporary,process.env.FIXTURE_STATE);};
 const log=(event)=>appendFileSync(process.env.FIXTURE_LOG,JSON.stringify(event)+'\\n');
 log({tool,args,pid:process.pid});
-if(tool==='python3'||tool==='python') console.log(JSON.stringify(state.simulatorOnly?[]:state.twoPhones?[{id:'fixture-phone',connection:'USB'},{id:'fixture-phone-2',connection:'USB'}]:[{id:'fixture-phone',connection:'USB'}]));
+if(tool==='poki-native'&&args[0]==='--local-server') {
+ const {createServer}=await import('node:net'),{execFile}=await import('node:child_process');
+ const running=new Set();
+ // Like the Rust helper, an abandoned read runs to completion and an abandoned input is dropped; the helper's own exit ends both.
+ process.once('SIGTERM',async()=>{await Promise.all([...running].map(child=>new Promise(done=>{child.once('exit',done);child.kill('SIGKILL');})));process.exit(0);});
+ // Like the Rust helper, end with the daemon that owns stdin, even when it crashed.
+ process.stdin.once('end',()=>process.kill(process.pid,'SIGTERM'));process.stdin.resume();
+ const server=createServer(socket=>{
+  socket.write(JSON.stringify({pid:process.pid})+'\\n');
+  createInterface({input:socket}).once('line',line=>{
+   const child=execFile(process.execPath,[process.argv[1],'--fixture-request'],(error,stdout,stderr)=>{
+    running.delete(child);
+    if(!socket.destroyed)socket.end((error?JSON.stringify({transport_error:true,error:stderr||'Fixture native service failed'}):stdout.trim())+'\\n');
+   });
+   running.add(child);
+   const op=JSON.parse(line).op;
+   if(!['ax_tree','screenshot','device_info','display_info','list_apps'].includes(op))socket.once('close',()=>child.kill());
+   child.stdin.end(line);
+  });
+ });
+ server.listen(args[2],()=>console.log(JSON.stringify({ready:true})));
+ await new Promise(()=>{});
+}
+else if(tool==='python3'||tool==='python') console.log(JSON.stringify(state.simulatorOnly?[]:state.twoPhones?[{id:'fixture-phone',connection:'USB'},{id:'fixture-phone-2',connection:'USB'}]:[{id:'fixture-phone',connection:'USB'}]));
 else if(tool==='xcrun') {if(args.includes('listapps')){console.log('<?xml version="1.0"?><plist version="1.0"><dict><key>local.fixture</key><dict><key>CFBundleName</key><string>Fixture</string></dict></dict></plist>');process.exit(0);}if(args.includes('launch')){console.log('local.fixture: 4242');process.exit(0);}if(args.includes('keyboard')){writeFileSync(process.env.FIXTURE_STATE,JSON.stringify({...state,keyboard:args.at(-1)}));process.exit(0);}if(args.includes('screenshot')){copyFileSync(process.env.FIXTURE_IMAGE,args.at(-1));process.exit(0);}if(args.includes('devicectl')&&args.includes('copy')){if(state.denyContainer){console.error('Container access denied by device');process.exit(1);}const destination=args[args.indexOf('--destination')+1];mkdirSync(destination+'/Documents',{recursive:true});writeFileSync(destination+'/Documents/check.txt','fixture container contents');console.log(JSON.stringify({info:{outcome:'success'},result:{}}));process.exit(0);}if(state.coreDeviceUnavailable&&args.includes('devicectl')){console.error('ERROR: The specified device was not found. (com.apple.dt.CoreDeviceError error 1000)');process.exit(1);} console.log(JSON.stringify({devices:state.simulatorOnly?{'com.apple.CoreSimulator.SimRuntime.iOS-27-0':[{udid:'fixture-sim',name:'Fixture Simulator',state:state.simulatorBooted?'Booted':'Shutdown',dataPath:process.env.HOME+'/simulator'},...(state.secondSimulator?[{udid:'fixture-sim-2',name:'Second Simulator',state:'Booted',dataPath:process.env.HOME+'/simulator-2'}]:[])]}:{}}));}
 else if(tool==='idevice') {
  if(args.includes('screenshot')) {if(state.screenshotUnavailable){console.error('Screenshot service unavailable');process.exit(1);}copyFileSync(process.env.FIXTURE_IMAGE,args.at(-1));console.log('Screenshot saved to: fixture');}
@@ -51,14 +75,14 @@ else if(tool==='idevice') {
    if(now.ocrHangOnce){writeFileSync(process.env.FIXTURE_STATE,JSON.stringify({...now,ocrHangOnce:false}));continue;}
    if(now.ocrUnavailable){console.log(JSON.stringify({path,error:'Text recognition unavailable'}));continue;}
    if(now.ocrXs?.length>1)writeFileSync(process.env.FIXTURE_STATE,JSON.stringify({...now,ocrXs:now.ocrXs.slice(1)}));
-   console.log(JSON.stringify({path,elements:[{text:now.appearsAfterReads?'Loading':now.ocrLabel??now.label??'First',x:now.ocrXs?.[0]??10,y:10,width:40,height:20}]}));
+   console.log(JSON.stringify({path,elements:now.ocrElements??[{text:now.appearsAfterReads?'Loading':now.ocrLabel??now.label??'First',x:now.ocrXs?.[0]??10,y:10,width:40,height:20}]}));
   }
   process.exit(0);
  }
  if(state.ocrUnavailable){console.error('Text recognition unavailable');process.exit(1);}
  if(state.ocrDelayMs)await new Promise(done=>setTimeout(done,state.ocrDelayMs));
  if(state.ocrXs?.length>1)writeFileSync(process.env.FIXTURE_STATE,JSON.stringify({...state,ocrXs:state.ocrXs.slice(1)}));
- console.log(JSON.stringify([{text:state.appearsAfterReads?'Loading':state.ocrLabel??state.label??'First',x:state.ocrXs?.[0]??10,y:10,width:40,height:20}]));
+ console.log(JSON.stringify(state.ocrElements??[{text:state.appearsAfterReads?'Loading':state.ocrLabel??state.label??'First',x:state.ocrXs?.[0]??10,y:10,width:40,height:20}]));
 }
 else if(tool==='simulator') {
  const connectionKeyboard=state.keyboard;
@@ -77,18 +101,20 @@ else if(tool==='simulator') {
 }
 else if(tool==='poki-native') {
  let input='';for await(const chunk of process.stdin)input+=chunk;const req=JSON.parse(input);log({op:req.op,request:req});
- if(state.block===req.op){setInterval(()=>{},10000);}
+ if(req.op==='release_input')console.log(JSON.stringify({released:true}));
+ else if(state.block===req.op){setInterval(()=>{},10000);}
  else if(req.op==='install_app'||req.op==='uninstall_app'){${isWin
    ? `if(req.op==='install_app'){let listing='';try{listing=execFileSync('tar',['-xOf',req.ipa_path,'Payload/InstallFixture.app/Info.plist'],{encoding:'utf8',stdio:['ignore','pipe','ignore']});}catch(error){listing='';}if(listing&&!listing.includes('local.installfixture'))throw Error('Invalid package layout');}`
    : `if(req.op==='install_app'&&!execFileSync('/usr/bin/unzip',['-p',req.ipa_path,'Payload/InstallFixture.app/Info.plist'],{encoding:'utf8'}).includes('local.installfixture'))throw Error('Invalid package layout');`}if(state.installUnknown){console.log(JSON.stringify({isError:true,outcome:'unknown',operation:req.op,bundle_id:req.bundle_id,error:'Connection closed after sending request'}));process.exit(0);}writeFileSync(process.env.FIXTURE_STATE,JSON.stringify({...state,installed:req.op==='install_app',inventoryFailed:state.failInventoryAfterMutation}));console.log(JSON.stringify({outcome:'completed',bundle_id:req.bundle_id,staging_cleanup:{removed:true}}));}
  else if(req.op==='list_apps'&&state.inventoryFailed){console.error('Inventory connection unavailable');process.exit(1);}
  else if(req.op==='list_apps'&&state.appDirectoryFailures){writeFileSync(process.env.FIXTURE_STATE,JSON.stringify({...state,appDirectoryFailures:state.appDirectoryFailures-1}));console.error('bad device');process.exit(1);}
  else if(req.op==='list_apps')console.log(JSON.stringify({apps:state.apps??[...(state.installed?[{bundle_id:'local.installfixture',name:'Install Fixture',system:false,version:'3'}]:[]),{bundle_id:'com.apple.Preferences',name:'Settings',system:true,version:'1.0',path:'/Applications/Preferences.app',developer:false},{bundle_id:'local.fixture',name:'Fixture',system:false,version:'2.0',path:'/private/var/containers/Bundle/Application/fixture.app',developer:true}]}));
- else if(req.op==='launch_app'){if(state.launchNotSent){console.log(JSON.stringify({isError:true,outcome:'not_sent',launched:false,error:'No installed app matches the given name.'}));process.exit(0);}if(state.launchError){console.error('Launch service rejected the request');process.exit(1);}writeFileSync(process.env.FIXTURE_STATE,JSON.stringify({...state,launched:true}));console.log(JSON.stringify({bundle_id:req.bundle_id??'com.apple.Preferences',name:'Settings',pid:state.invalidPid?0:4242,launched:true}));}
- else if(req.op==='ax_tree'){if(state.launched&&state.axHangs){writeFileSync(process.env.FIXTURE_STATE,JSON.stringify({...state,axHangs:state.axHangs-1}));await new Promise(()=>setInterval(()=>{},10000));}if(state.axUnavailable){console.error('Foreground observation unavailable');process.exit(1);}if(state.axDelayMs)await new Promise(done=>setTimeout(done,state.axDelayMs));if(state.axEmpty){console.log(JSON.stringify({elements:[]}));process.exit(0);}if(state.moving){state.moving+=1;writeFileSync(process.env.FIXTURE_STATE,JSON.stringify(state));}if(state.appearsAfterReads)writeFileSync(process.env.FIXTURE_STATE,JSON.stringify({...state,appearsAfterReads:state.appearsAfterReads-1}));readList(state,text=>writeFileSync(process.env.FIXTURE_STATE,text));console.log(JSON.stringify({...(state.launched?{foreground_app:{pid:state.foregroundPid??4242,bundle_id:'local.fixture'}}:{}),elements:state.elements??[...(state.phone?state.phone.rows.map(r=>({role:'TextField',object_id:r.id,...(r.placeholder?{placeholder:r.placeholder}:{}),value:r.value||r.placeholder||'',traits:r.editing?editingBit:0,focused:Boolean(r.editing),frame:{x:10,y:phoneTop(state,r),width:40,height:20}})):[]),...(state.appRoot?[{label:state.appRoot,role:'Application',frame:{x:0,y:0,width:100,height:200}}]:[]),{label:state.appearsAfterReads?'Loading':state.label??'First',role:'Button',selected:Boolean(state.selected),frame:{x:10,y:10+(state.moving??0)%9*10,width:40,height:20}},...(state.field===undefined?[]:[{role:'TextField',value:state.field,placeholder:'Name',focused:state.focused,frame:{x:10,y:(listSlid(state)?140:40)+(state.moving??0)%9*10,width:40,height:20}}]),...(state.otherField===undefined?[]:[{role:'TextField',value:state.otherField,placeholder:'Other',focused:!state.focused,frame:{x:10,y:70,width:40,height:20}}]),...(state.list?.editing?[{role:'TextField',value:state.list.row,placeholder:'Name',focused:true,frame:{x:10,y:40,width:40,height:20}}]:listSlid(state)?[{label:state.list.row,role:'StaticText',frame:{x:10,y:40,width:40,height:20}}]:[])]}));}
+ else if(req.op==='launch_app'){if(state.launchNotSent){console.log(JSON.stringify({isError:true,outcome:'not_sent',launched:false,error:'No installed app matches the given name.'}));process.exit(0);}if(state.launchError){console.error('Launch service rejected the request');process.exit(1);}writeState(JSON.stringify({...state,launched:true}));console.log(JSON.stringify({bundle_id:req.bundle_id??'com.apple.Preferences',name:'Settings',pid:state.invalidPid?0:4242,launched:true}));}
+ else if(req.op==='ax_tree'){if(state.launched&&state.axHangs){writeState(JSON.stringify({...state,axHangs:state.axHangs-1}));await new Promise(()=>setInterval(()=>{},10000));}if(state.axUnavailable){console.error('Foreground observation unavailable');process.exit(1);}if(state.axDelayMs)await new Promise(done=>setTimeout(done,state.axDelayMs));if(state.axDelays?.length){writeState(JSON.stringify({...state,axDelays:state.axDelays.slice(1)}));await new Promise(done=>setTimeout(done,state.axDelays[0]));}if(state.axEmpty){console.log(JSON.stringify({elements:[]}));process.exit(0);}const stale=state.staleReads>0;if(stale){state.staleReads-=1;writeState(JSON.stringify(state));}if(state.moving){state.moving+=1;writeState(JSON.stringify(state));}if(state.appearsAfterReads)writeState(JSON.stringify({...state,appearsAfterReads:state.appearsAfterReads-1}));readList(state,text=>writeState(text));const lagging=state.foregroundLagReads>0;if(lagging){state.foregroundLagReads-=1;writeState(JSON.stringify(state));}console.log(JSON.stringify({...(state.launched||state.bundleId?{foreground_app:{pid:lagging?1:state.foregroundPid??4242,...(state.bundleId?{bundle_id:state.bundleId,name:state.appName}:{})}}:{}),elements:state.elements??[...(state.phone?state.phone.rows.map(r=>({role:'TextField',object_id:r.id,...(r.placeholder?{placeholder:r.placeholder}:{}),value:r.value||r.placeholder||'',traits:r.editing?editingBit:0,focused:Boolean(r.editing),frame:{x:10,y:phoneTop(state,r),width:40,height:20}})):[]),...(state.appRoot?[{label:state.appRoot,role:'Application',frame:{x:0,y:0,width:100,height:200}}]:[]),{label:stale?state.staleLabel:state.appearsAfterReads?'Loading':state.label??'First',role:state.role??'Button',selected:Boolean(state.selected),frame:{x:10,y:10+(state.moving??0)%9*10,width:40,height:20}},...(state.field===undefined?[]:[{role:'TextField',value:state.field,placeholder:'Name',focused:state.focused,frame:{x:10,y:(listSlid(state)?140:40)+(state.moving??0)%9*10,width:40,height:20}}]),...(state.otherField===undefined?[]:[{role:'TextField',value:state.otherField,placeholder:'Other',focused:!state.focused,frame:{x:10,y:70,width:40,height:20}}]),...(state.list?.editing?[{role:'TextField',value:state.list.row,placeholder:'Name',focused:true,frame:{x:10,y:40,width:40,height:20}}]:listSlid(state)?[{label:state.list.row,role:'StaticText',frame:{x:10,y:40,width:40,height:20}}]:[])]}));}
  else {
   if(state.inputStopsRecording){const events=readFileSync(process.env.FIXTURE_LOG,'utf8').trim().split('\\n').map(JSON.parse);const receiver=events.filter(e=>e.args?.includes('screencapture')).at(-1);if(receiver){try{process.kill(receiver.pid,'SIGTERM');}catch(error){if(error.code!=='ESRCH')throw error;}}}
   if(state.inputError)process.exit(1);
+  if(state.inputReply){console.log(JSON.stringify(state.inputReply));process.exit(0);}
   if(state.afterInput){Object.assign(state,state.afterInput,{afterInput:undefined});writeFileSync(process.env.FIXTURE_STATE,JSON.stringify(state));}
   if(state.phone&&req.op==='tap'){phoneTap(state,req.y);writeFileSync(process.env.FIXTURE_STATE,JSON.stringify(state));}
   else if(req.op==='tap'&&state.field!==undefined){state.focused=true;writeFileSync(process.env.FIXTURE_STATE,JSON.stringify(state));}
@@ -134,7 +160,7 @@ export async function processGone(pid, timeoutMs = 4000) {
   }
   return ended();
 }
-export async function fixture(t, { approvalMode = 'ask', staleNative = false, toolsProfile = '', beforeStart, env: extraEnv = {} } = {}) {
+export async function fixture(t, { approvalMode = 'ask', staleNative = false, toolsProfile = '', beforeStart, env: plainEnv = {}, extraEnv } = {}) {
  const dir=await mkdtemp(join(tmpdir(),'poki-coordination-'));
  await cp(join(root,'src'),join(dir,'src'),{recursive:true});
  await cp(join(root,'package.json'),join(dir,'package.json'));
@@ -153,7 +179,7 @@ export async function fixture(t, { approvalMode = 'ask', staleNative = false, to
  for(const tool of commands)await install('bin',tool);
  for(const tool of ['poki-native','ocr','simulator'])await install('build',tool);
  if(staleNative){await mkdir(join(dir,'native/bridge/src'),{recursive:true});await writeFile(join(dir,'native/bridge/src/main.rs'),'fn main() {}');await utimes(join(dir,'build',exe('poki-native')),1,1);}
- const env={...process.env,...extraEnv,POKI_NO_UPDATE_CHECK:'1',POKI_MCP_TOOLS:toolsProfile,POKI_MCP_APPROVAL_MODE:approvalMode,HOME:dir,USERPROFILE:isWin?dir:process.env.USERPROFILE,PATH:join(dir,'bin')+delimiter+process.env.PATH,POKI_MCP_STATE_DIR:join(dir,'state'),IDEVICE_TOOLS:join(dir,'bin',isWin?'idevice-tools.exe':'idevice'),FIXTURE_STATE:state,FIXTURE_LOG:log,FIXTURE_IMAGE:image};
+ const env={...process.env,...plainEnv,POKI_NO_UPDATE_CHECK:'1',POKI_MCP_TOOLS:toolsProfile,POKI_MCP_APPROVAL_MODE:approvalMode,HOME:dir,USERPROFILE:isWin?dir:process.env.USERPROFILE,PATH:join(dir,'bin')+delimiter+process.env.PATH,POKI_MCP_STATE_DIR:join(dir,'state'),IDEVICE_TOOLS:join(dir,'bin',isWin?'idevice-tools.exe':'idevice'),FIXTURE_STATE:state,FIXTURE_LOG:log,FIXTURE_IMAGE:image,...extraEnv?.(dir)};
  let stderr='';
  const daemons=[];
  const startDaemon=async(port=0)=>{const child=spawn(process.execPath,[join(dir,'src/daemon.mjs'),'--port',String(port)],{env,stdio:['ignore','pipe',staleNative?'pipe':'inherit']});child.stderr?.on('data',chunk=>{stderr+=chunk;});const exited=once(child,'exit'),lines=createInterface({input:child.stdout});await once(lines,'line');const running={stop:async(signal='SIGTERM')=>{if(isWin)killTree(child);else child.kill(signal);await exited;lines.close();}};daemons.push(running);return running;};

@@ -1,10 +1,13 @@
-name: Bug report
-description: Something in Poki does not work as documented.
+name: Bug report (Poki MCP or Poki Agent on a computer)
+description: Poki MCP, Poki Agent, or a messaging channel does not work as documented.
 labels: [bug]
 body:
   - type: markdown
     attributes:
-      value: Remove passcodes, tokens, and private screen contents. To report a vulnerability, use [private reporting](https://github.com/scy7796/poki-for-windows/security/advisories/new).
+      value: |
+        Remove passcodes, tokens, pairing records, and private screen contents. To report a vulnerability, use [private reporting](https://github.com/scy7796/poki-for-windows/security/advisories/new).
+        Search [existing issues](https://github.com/scy7796/poki-for-windows/issues?q=is%3Aissue) first. A problem that also happens on macOS belongs [upstream](https://github.com/JosssphZhou/poki/issues).
+        For the Poki iPhone app or Poki Setup, report it [upstream](https://github.com/JosssphZhou/poki/issues).
   - type: textarea
     id: what
     attributes:
@@ -16,7 +19,7 @@ body:
     id: steps
     attributes:
       label: Steps to reproduce
-      description: The task or tool call, and the response you got.
+      description: The task or tool call, and the response you got. Say if you reproduced it more than once.
     validations:
       required: true
   - type: dropdown
@@ -26,15 +29,22 @@ body:
       options:
         - Poki MCP
         - Poki Agent
+        - iMessage or Telegram channel
+        - Setup or update (bin/setup, poki update)
+        - Native helper (poki-native)
+        - Relay or remote MCP (deploy/)
     validations:
       required: true
   - type: dropdown
-    id: device
+    id: connection
     attributes:
-      label: Device
+      label: Connection
       options:
-        - Physical iPhone
+        - Physical iPhone over USB
+        - Physical iPhone over LAN (RemotePairing)
+        - Physical iPhone over Tailscale or VPN
         - iOS Simulator
+        - Not device-related
     validations:
       required: true
   - type: input
@@ -44,3 +54,14 @@ body:
       description: Commit, Windows build (winver), iPhone model and iOS version, USB or Wi-Fi.
     validations:
       required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The daemon log lines or error output around the failure. Remove tokens and private text.
+      render: text
+  - type: textarea
+    id: cause
+    attributes:
+      label: Suspected cause or fix
+      description: Optional. File and line, or what you already tried.

@@ -1,0 +1,67 @@
+name: iPhone app bug (Poki app or Poki Setup)
+description: The standalone Poki iPhone app (Alpha or Pre-alpha), or Poki Setup on Mac or Windows, does not work.
+labels: [bug, ios-app]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Remove passcodes, Apple account details, tokens, pairing files, and private screen contents.
+        In the app, **Settings > Diagnostics > Copy Log** gives the log this form asks for. Agents filing for a user: read [AGENTS.md](https://github.com/JosssphZhou/poki/blob/main/AGENTS.md#file-an-issue).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, and what you saw instead. Include the exact error text.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What you did before it failed, and how long the app had been running or idle.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Install or signing (Poki Setup, iLoader, refresh)
+        - Pairing or Developer Mode
+        - Automation on the phone (reads, taps, typing)
+        - Chat, voice, or sessions
+        - Live Activity or background
+        - Remote MCP, relay, or connectors
+        - Updates or release channel
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: app-version
+    attributes:
+      label: App version
+      description: As shown in Settings, including the build number and channel.
+      placeholder: Poki 0.2.8 (501) Alpha
+    validations:
+      required: true
+  - type: input
+    id: install
+    attributes:
+      label: Installed with
+      description: Installer and its version, the computer's OS, and the Apple account type (free or paid developer).
+      placeholder: Poki Setup 0.2.1 (319) on Windows 11, free Apple account
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: iPhone and iOS
+      placeholder: iPhone 17 Pro, iOS 27.3
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Debug log
+      description: The log from Settings > Diagnostics > Copy Log, around the failure. Remove private text.
+      render: text

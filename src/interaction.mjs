@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { askHuman } from './human.mjs';
 import { screenIdentity } from './screen-identity.mjs';
+import { flagOn } from './element-flags.mjs';
 
 const behavior = JSON.parse(readFileSync(new URL('./data/interaction.json', import.meta.url), 'utf8'));
-import { pause, deadline, checkWork, stopped } from './work.mjs';
+import { pause, deadline, checkWork, stopped, remaining } from './work.mjs';
 export { pause } from './work.mjs';
 export const justReadMs = 500;
 const patienceMs = 5000, ocrAfterMs = 1000, ocrEveryMs = 2000, pollMs = 100, quietMs = 3000, stableWithinMs = 2500, focusWithinMs = 2000, screenTextLimit = 80;
@@ -11,17 +12,23 @@ const patienceMs = 5000, ocrAfterMs = 1000, ocrEveryMs = 2000, pollMs = 100, qui
 // cannot read at all is given this much more time before the search is called off.
 const ocrAllowanceMs = 12000;
 const strings = e => [e.label, e.text, e.value, e.identifier, e.placeholder].filter(v => typeof v === 'string');
-// A recognizer may put a space after every Chinese character it reads, and Windows OCR
-// also does it inside numbers and around punctuation ("微信 ( 714 )"). A caller never
-// writes those spaces, so a string that contains CJK loses all of its whitespace before
-// matching; a Latin-only string keeps its word boundaries.
-const cjk = '\\u3400-\\u9fff\\uf900-\\ufaff\\u3040-\\u30ff';
+// Join recognizer-spaced CJK characters without removing English word boundaries
+// or the spaces between CJK and other text. Windows OCR also spaces out numbers and
+// punctuation inside CJK text ("微信 ( 714 )"), which a caller never writes, so in a
+// string that contains CJK a space survives only between two Latin words, or between a
+// Latin word and a number.
+const cjk = '\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff';
 const hasCjk = new RegExp(`[${cjk}]`, 'u');
+const word = /[\p{Script=Latin}0-9]/u, digit = /[0-9]/;
+const spaceInCjk = (space, offset, whole) => {
+  const before = whole[offset - 1] ?? '', after = whole[offset + space.length] ?? '';
+  return word.test(before) && word.test(after) && !(digit.test(before) && digit.test(after)) ? ' ' : '';
+};
 const normalize = v => {
   const n = v.normalize('NFKC').toLocaleLowerCase().trim();
-  return hasCjk.test(n) ? n.replace(/\s+/gu, '') : n;
+  return hasCjk.test(n) ? n.replace(/\s+/gu, spaceInCjk) : n;
 };
-const visible = e => e.visible !== false && e.visible !== 0;
+const visible = e => flagOn(e.visible);
 // Alert and prompt text is compared against the Chinese entries in data/interaction.json, and
 // a recognizer writes spaces between those characters, so it needs the same normalisation as
 // every other comparison. Without it "允 许" never matched "允许", and a purchase prompt could
@@ -94,6 +101,15 @@ function missingText(value, seen) {
 function tooMany(value, found) {
   const brief = found.map(e => ({ type: e.type ?? e.role, label: e.label ?? e.text ?? e.value, ...center(e) }));
   return `Expected one match for ${JSON.stringify(value)}; found ${found.length}. Nothing was tapped. Use tap with x and y to choose one: ${JSON.stringify(brief)}`;
+}
+
+// The frame of the scrolling element a caller named, as it is on screen now.
+async function containerBox(ctx, label) {
+  const { elements } = await readStructure(ctx, justReadMs);
+  const found = matching(elements, label, true), candidates = found.length ? found : matching(elements, label);
+  if (!candidates.length) throw new Error(`No visible container matches ${JSON.stringify(label)}. Nothing was scrolled. Give x and y inside the list instead.`);
+  const element = candidates.sort((a, b) => area(b) - area(a))[0];
+  return element.frame ?? element;
 }
 
 // A failed accessibility read counts as an empty tree, so OCR still gets its turn.
@@ -174,6 +190,38 @@ async function locate(ctx, find, describe, mustHold, verify = true) {
   }
 }
 
+// Which scrolling container moved between two reads of the screen: the labelled elements that kept
+// their identity and shifted by the same amount, and the smallest element that holds them and did not
+// move itself. Items a list reuses for new content show as appeared inside it.
+const identity = e => `${e.type ?? e.role ?? ''}|${e.label ?? e.text ?? e.value ?? ''}`;
+export function whatMoved(before, after) {
+  const named = list => { const counts = new Map(); for (const e of list) counts.set(identity(e), (counts.get(identity(e)) ?? 0) + 1); return new Map(list.filter(e => (e.label ?? e.text ?? e.value) && counts.get(identity(e)) === 1).map(e => [identity(e), e])); };
+  const was = named(before.filter(visible)), now = named(after.filter(visible));
+  const groups = new Map();
+  for (const [key, e] of now) {
+    const old = was.get(key);
+    if (!old) continue;
+    const a = old.frame ?? old, b = e.frame ?? e, dx = Math.round(b.x - a.x), dy = Math.round(b.y - a.y);
+    if (Math.abs(dx) < 2 && Math.abs(dy) < 2) continue;
+    const shift = `${Math.round(dx / 2) * 2},${Math.round(dy / 2) * 2}`;
+    groups.set(shift, [...(groups.get(shift) ?? []), { old, e, dx, dy }]);
+  }
+  const appeared = [...now.keys()].filter(key => !was.has(key)).map(key => now.get(key));
+  const moved = [...groups.values()].sort((a, b) => b.length - a.length)[0] ?? [];
+  const items = moved.length ? moved.flatMap(m => [m.old, m.e]) : appeared;
+  if (!items.length) return null;
+  const holds = c => items.every(e => covers(c, center(e))) && !items.includes(c);
+  const stayed = c => { const old = was.get(identity(c)); if (!old) return false; const a = old.frame ?? old, b = c.frame ?? c; return Math.abs(a.x - b.x) < 2 && Math.abs(a.y - b.y) < 2; };
+  const container = after.filter(e => visible(e) && (e.type ?? e.role) !== 'Application' && holds(e) && stayed(e)).sort((a, b) => area(a) - area(b))[0];
+  const box = container ? container.frame ?? container : undefined;
+  return {
+    container: container ? (container.label ?? container.text ?? container.type ?? container.role ?? null) : null,
+    ...(box ? { frame: [box.x, box.y, box.width, box.height].map(Math.round) } : {}),
+    ...(moved.length ? { shift: { x: moved[0].dx, y: moved[0].dy }, items_moved: moved.length } : {}),
+    ...(appeared.length ? { appeared: appeared.length } : {}),
+  };
+}
+
 const describeElement = element => {
   const value = typeof element.value === 'string' && element.value !== element.placeholder ? element.value : undefined;
   const label = element.label ?? element.text;
@@ -183,50 +231,147 @@ const describeElement = element => {
   return `${element.type ?? element.role ?? 'Element'}: ${parts.join(' = ')}${element.focused ? ' (focused)' : ''}`;
 };
 
+// The reply's view of one read: what is visible, in which app, and any system prompt on it.
+export function describeScreen(seen, elements = seen.elements, source = 'accessibility') {
+  const text = [...new Set(elements.filter(visible).map(describeElement).filter(Boolean))];
+  const warning = promptWarning(elements);
+  return {
+    // When the read behind this text began, and how old it is now.
+    ...(seen.observedAt ? { observed_at: seen.observedAt, tree_age_ms: Math.round(performance.now() - seen.startedAt) } : {}),
+    ...(seen.served ? { served: seen.served } : {}),
+    foreground: seen.foreground?.bundle_id ?? seen.foreground?.name ?? null,
+    source,
+    page_identity: screenIdentity({ foreground: seen.foreground, elements, prompt: warning }),
+    text: text.slice(0, screenTextLimit),
+    ...(text.length > screenTextLimit ? { more: text.length - screenTextLimit } : {}),
+    ...(warning ? { prompt: warning } : {}),
+  };
+}
+
 // What the screen shows once it has stopped changing: a list still coasting after a scroll would
 // otherwise report a position it is about to leave. `compared` is false when accessibility could not
-// read it, because OCR text alone cannot say whether anything moved.
-export async function readScreen(ctx, { once = false } = {}) {
+// read it, because OCR text alone cannot say whether anything moved. Over a slow connection one read
+// can take seconds, so the reads stop when another would not finish inside the caller's deadline, and
+// the last one is reported with screen_stable false rather than lost.
+export async function readScreen(ctx, { once = false, before, confirmation, structured = false, structuredVisual = false } = {}) {
   await ctx.settle();
   const started = performance.now();
+  const cost = () => ctx.readCost?.() ?? 0;
   // A batch that ends on a touch has just read the screen to see whether it changed.
-  let seen = await readStructure(ctx, once ? 0 : justReadMs);
-  while (!once && performance.now() - started < stableWithinMs) {
+  let seen = await readStructure(ctx, once ? 0 : justReadMs), stable = false;
+  // A delayed confirming read may be a new object yet represent the same stable AX tree.
+  let reuseStable = false;
+  // A read that began before the last input shows the screen the input was sent to, never the current one.
+  if (seen.startedAt < ctx.lastInputAt) seen = await readStructure(ctx, 0);
+  const window = Math.max(stableWithinMs, 2 * cost() + pollMs);
+  while (!once && performance.now() - started < window) {
+    if (remaining() < cost() + pollMs) break;
     await pause(pollMs);
     const next = await readStructure(ctx, 0);
     const same = next.signature === seen.signature;
     seen = next;
-    if (same) break;
+    if (same) { stable = true; break; }
+  }
+  reuseStable = stable;
+  if (before !== undefined && seen.elements.length && seen.signature === before) {
+    const confirmed = await confirmUnchanged(ctx, before, seen, confirmation);
+    if (confirmed !== seen) {
+      // A later AX read with an unchanged signature can be reused; keep
+      // the original screen_stable reporting independent of this receipt gate.
+      reuseStable = confirmed.elements?.length > 0 && confirmed.signature === seen.signature &&
+        Number.isFinite(confirmed.startedAt) && confirmed.startedAt >= seen.startedAt;
+      seen = confirmed; stable = false;
+    }
   }
   const compared = seen.elements.length > 0;
   const elements = compared ? seen.elements : (await ctx.recognize({ source: 'ocr', max_elements: Number.MAX_SAFE_INTEGER })).elements;
-  const text = [...new Set(elements.filter(visible).map(describeElement).filter(Boolean))];
-  const warning = promptWarning(elements);
+  let warning = promptWarning(elements);
+  let structuredObservation;
+  if (structured && reuseStable && compared && seen.structure_started_at && seen.structure_completed_at &&
+      Date.parse(seen.structure_started_at) >= Date.parse(ctx.lastInputCompletedAt) &&
+      seen.revision === ctx.coordinator.revision(seen.device) &&
+      ctx.size?.device === seen.device && elements.length <= 400) {
+    // A route may opt into image/OCR verification. The screenshot is taken
+    // AFTER the AX structure stabilizes; neither source is claimed atomic.
+    const axViewport = { ...ctx.size };
+    let frame;
+    if (structuredVisual) {
+      try { frame = await ctx.capture(); }
+      catch (error) { if (stopped(error)) throw error; }
+    }
+    const sameViewport = axViewport.device === frame?.device && axViewport.width === frame?.width && axViewport.height === frame?.height;
+    if (!structuredVisual || frame && frame.device === seen.device && sameViewport &&
+        (frame.revision === seen.revision || frame.revision === seen.revision + 1) &&
+        Date.parse(frame.capture_started_at) >= Date.parse(seen.structure_completed_at)) {
+      let prompt = { status: 'checked', source: 'accessibility', warning: warning ?? null };
+      if (structuredVisual) {
+        prompt.source = 'ocr';
+        try { prompt.warning ??= promptWarning(await ctx.ocr(frame)); }
+        catch (error) {
+          if (stopped(error)) throw error;
+          prompt = { status: 'unavailable', source: 'ocr' };
+        }
+      }
+      warning ??= prompt.warning;
+      const observation = ctx.observationFromStructure(seen, frame);
+      if (observation) {
+        ctx.elements = elements.map(element => ({ ...element, ref: `e${++ctx.nextRef}` }));
+        ctx.elementsAt = Date.now();
+        if (!frame) ctx.structureViewport = {
+          device: seen.device, revision: seen.revision,
+          width: observation.width, height: observation.height,
+          // If AX did not identify an unambiguous full-screen root,
+          // the next coordinate/ref action must capture to verify size.
+          rootVerified: seen.rootVerified === true,
+        };
+        structuredObservation = { observation, source: 'accessibility', foreground: seen.foreground,
+          elements: ctx.elements, total: ctx.elements.length, truncated: false, prompt };
+      }
+    }
+  }
   return {
     signature: compared ? seen.signature : undefined,
-    screen: {
-      foreground: seen.foreground?.bundle_id ?? seen.foreground?.name ?? null,
-      source: compared ? 'accessibility' : 'ocr',
-      page_identity: screenIdentity({ foreground: seen.foreground, elements, prompt: warning }),
-      text: text.slice(0, screenTextLimit),
-      ...(text.length > screenTextLimit ? { more: text.length - screenTextLimit } : {}),
-      ...(warning ? { prompt: warning } : {}),
-    },
+    ...(structuredObservation ? { structuredObservation } : {}),
+    screen: { ...describeScreen(seen, elements, compared ? 'accessibility' : 'ocr'),
+      ...(compared && !stable ? { screen_stable: false } : {}),
+      ...(warning ? { prompt: warning } : {}) },
   };
 }
 
 // Whether the screen differs from the one an input was sent to. One differing read settles it; a
 // matching read is confirmed by a second, the same two reads readScreen needs to call a screen still.
-export async function screenChanged(ctx, before) {
+export async function screenChanged(ctx, before, confirmation) {
   await ctx.settle();
+  let seen;
   for (let read = 0; read < 2; read++) {
     if (read) await pause(pollMs);
-    const seen = await readStructure(ctx, 0);
+    seen = await readStructure(ctx, 0);
     if (!seen.elements.length) return undefined;
     if (seen.signature !== before) return true;
   }
-  return false;
+  return (await confirmUnchanged(ctx, before, seen, confirmation)).signature !== before;
 }
+
+// Two matching reads can still be the old screen: an app opening from the Home Screen keeps
+// reporting the Home Screen's tree for a moment after the touch. So "unchanged" waits once more,
+// and longer, polling, when the touch was on an app icon. It costs time only when nothing changed.
+export const confirmAfterMs = 700, launchWithinMs = 2500, launchPollMs = 300;
+async function confirmUnchanged(ctx, before, seen, { intervalMs = confirmAfterMs, withinMs = confirmAfterMs } = {}) {
+  const started = performance.now(), cost = ctx.readCost?.() ?? 0;
+  while (seen.signature === before && performance.now() - started < withinMs) {
+    if (remaining() < intervalMs + cost) break;
+    await pause(intervalMs);
+    const next = await readStructure(ctx, 0);
+    if (next.elements.length) seen = next;
+  }
+  return seen;
+}
+
+// An app icon is a touch that should bring another app to the front.
+const opensApp = (element, seen) => {
+  const role = element.type ?? element.role ?? '';
+  return /^(?:AX|XCUIElementType)?Icon$/i.test(role) || seen?.foreground?.bundle_id === 'com.apple.springboard' && /^(?:AX|XCUIElementType)?Button$/i.test(role);
+};
 
 export async function interaction(ctx, name, args) {
   const frame = () => ctx.screenSize();
@@ -235,6 +380,7 @@ export async function interaction(ctx, name, args) {
       await ctx.viewport();
       const e = ctx.elements.find(e => e.ref === a.ref.toLowerCase());
       if (!e || Date.now() - ctx.elementsAt > 30000) throw new Error('Element ref is stale. Use tap_text with its label, or call list_elements again.');
+      ctx.expectsForeground = opensApp(e, ctx.seen);
       const f = e.frame ?? e;
       return { x: f.x + f.width / 2, y: f.y + f.height / 2 };
     }
@@ -257,8 +403,11 @@ export async function interaction(ctx, name, args) {
     let result = await readComplete();
     let matches = matching(result.elements, value, exact);
     if (!matches.length && result.source === 'accessibility') {
-      result = await read({ source:'ocr', max_elements:Number.MAX_SAFE_INTEGER }, true);
-      matches = matching(result.elements, value, exact);
+      // OCR only adds what accessibility cannot see; without the helper the accessibility answer stands.
+      try {
+        result = await read({ source:'ocr', max_elements:Number.MAX_SAFE_INTEGER }, true);
+        matches = matching(result.elements, value, exact);
+      } catch (error) { if (stopped(error) || !result.elements.length) throw error; }
     }
     return { ...result, matches };
   };
@@ -266,6 +415,7 @@ export async function interaction(ctx, name, args) {
     case 'tap': case 'double_tap': case 'long_press': return tap(args, name);
     case 'tap_text': {
       const element = await locate(ctx, elements => matching(elements, args.text, args.exact), { missing: seen => missingText(args.text, seen), many: found => tooMany(args.text, found) }, undefined, args.verify !== false);
+      ctx.expectsForeground = opensApp(element, ctx.seen);
       return ctx.input({ op: 'tap', ...center(element), duration_ms: 50 });
     }
     case 'swipe': case 'drag': return ctx.input({
@@ -275,34 +425,50 @@ export async function interaction(ctx, name, args) {
     });
     case 'scroll': {
       const f = await frame();
-      const x = (args.x ?? f.width / 2) / f.width, y = (args.y ?? f.height / 2) / f.height;
+      const box = args.container ? await containerBox(ctx, args.container) : undefined;
+      const x = (args.x ?? (box ? box.x + box.width / 2 : f.width / 2)) / f.width, y = (args.y ?? (box ? box.y + box.height / 2 : f.height / 2)) / f.height;
       const horizontal = ['left', 'right'].includes(args.direction);
       const direction = ['down', 'right'].includes(args.direction) ? -1 : 1;
       const clamp = n => Math.max(0, Math.min(1, n));
-      return ctx.input({ op: 'drag',
-        x1: clamp(x - (horizontal ? direction * .15 : 0)) * (f.width - 1),
-        y1: clamp(y - (horizontal ? 0 : direction * .15)) * (f.height - 1),
-        x2: clamp(x + (horizontal ? direction * .15 : 0)) * (f.width - 1),
-        y2: clamp(y + (horizontal ? 0 : direction * .15)) * (f.height - 1),
-        duration_ms: 350, hold_ms: 0,
+      // A page is most of the container's extent, dragged slowly and held before lifting, so the list
+      // moves by the drag alone and does not coast past items.
+      const half = args.pages ? (horizontal ? (box?.width ?? f.width) / f.width : (box?.height ?? f.height) / f.height) * .4 : .15;
+      const drag = () => ctx.input({ op: 'drag',
+        x1: clamp(x - (horizontal ? direction * half : 0)) * (f.width - 1),
+        y1: clamp(y - (horizontal ? 0 : direction * half)) * (f.height - 1),
+        x2: clamp(x + (horizontal ? direction * half : 0)) * (f.width - 1),
+        y2: clamp(y + (horizontal ? 0 : direction * half)) * (f.height - 1),
+        duration_ms: args.pages ? 600 : 350, hold_ms: 0, ...(args.pages ? { end_hold_ms: 250 } : {}),
       });
+      let result;
+      for (let page = 0; page < (args.pages ?? 1); page++) {
+        if (page) await pause(300);
+        result = await drag();
+        if (result.isError || result.stopped) break;
+      }
+      return { ...result, ...(box ? { container: args.container } : {}), ...(args.pages ? { pages: args.pages } : {}) };
     }
     case 'scroll_to': {
-      let previous;
+      let previous, first;
       const maximum = Math.min(args.max_scrolls ?? args.max_swipes ?? 10, 50);
+      // Sideways lists page and snap: a short drag may not move them, and a fling skips items.
+      const pages = ['left', 'right'].includes(args.direction) ? 1 : undefined;
       for (let count = 0; count <= maximum; count++) {
         const result = await findText(args.text, args.exact);
+        first ??= result.elements;
         const matches = result.matches;
-        if (matches.length) return { found: true, scrolls: count, elements: matches, source: result.source };
+        if (matches.length) return { found: true, scrolls: count, elements: matches, source: result.source, ...(count ? { moved: whatMoved(first, result.elements) } : {}) };
         const signature = JSON.stringify(result.elements.filter(visible).flatMap(e => [e.label, e.text, e.value].filter(t => typeof t === 'string')));
         const unchanged = signature === previous;
         if (count === maximum || unchanged) throw new Error(`Text ${JSON.stringify(args.text)} was not found after ${count} scrolls${unchanged ? '; visible content stopped changing' : ''}.`);
         previous = signature;
-        await interaction(ctx, 'scroll', { ...args, direction: args.direction ?? 'down' });
+        await interaction(ctx, 'scroll', { ...args, direction: args.direction ?? 'down', ...(pages ? { pages } : {}) });
         await pause(200);
       }
       break;
     }
+    case 'touch_path': return ctx.input({ op: 'draw_strokes', strokes: [args.points] });
+    case 'draw_strokes': return ctx.input({ op: 'draw_strokes', strokes: args.strokes.map(stroke => stroke.points) });
     case 'pinch': {
       const f = await frame();
       const p = { x: args.x ?? f.width / 2, y: args.y ?? f.height / 2 };
@@ -418,8 +584,17 @@ export async function interaction(ctx, name, args) {
     case 'press_key': return ctx.input({ op: 'key', key: args.key, modifiers: args.modifiers ?? [], count: args.count ?? 1 });
     case 'press_button': return ctx.input({ op: 'button', button: args.button });
     case 'hide_keyboard': {
+      let hideControl;
       const keyboardVisible = async () => {
         let result = await read({ max_elements: Number.MAX_SAFE_INTEGER });
+        // iPad keyboards expose a hide key; an ordinary app button with that name is not one.
+        const hideKeys = result.source === 'accessibility' ? result.elements.filter(e => {
+          const f = e.frame ?? e;
+          return visible(e) && /^(?:AX|XCUIElementType)?key$/i.test(e.type ?? e.role ?? '') &&
+            normalize(e.label ?? '') === 'hide keyboard' && f.width > 0 && f.height > 0 &&
+            f.x >= 0 && f.y > result.height * .5 && f.x + f.width <= result.width && f.y + f.height <= result.height;
+        }) : [];
+        hideControl = hideKeys.length === 1 ? hideKeys[0] : undefined;
         if (result.elements.filter(visible).some(e => {
           const f = e.frame ?? e;
           return [e.type, e.role].some(type => typeof type === 'string' &&
@@ -441,9 +616,10 @@ export async function interaction(ctx, name, args) {
         return letters.size >= 8;
       };
       if (!await keyboardVisible()) return { hidden: true, already_hidden: true };
-      await ctx.input({ op: 'button', button: 'keyboard' });
-      if (await keyboardVisible()) throw new Error("The keyboard is still visible after the toggle. Use its hide control, or tap outside the field if the app supports dismissing it that way.");
-      return { hidden: true, screen_change_verified: true };
+      const input = await ctx.input(hideControl ? { op: 'tap', ...center(hideControl), duration_ms: 50 } : { op: 'button', button: 'keyboard' });
+      if (input.isError || input.stopped) return input;
+      if (await keyboardVisible()) throw new Error("The keyboard is still visible after the hide attempt. Use its hide control, or tap outside the field if the app supports dismissing it that way.");
+      return { hidden: true, screen_change: 'changed', screen_change_verified: true };
     }
     case 'system_gesture': {
       if (args.gesture === 'go_home') return ctx.input({ op: 'button', button: 'home' });

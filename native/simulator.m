@@ -267,7 +267,7 @@ static void clearFocusedText(id device, xpc_connection_t channel, NSString *serv
 
 // Sends one batch, and releases whatever it still holds if the batch ends early.
 static NSDictionary *sendHID(xpc_connection_t channel, NSString *service, NSArray *events) {
-  if (![events isKindOfClass:NSArray.class] || events.count > 5000) fail(@"Expected at most 5000 HID events.");
+  if (![events isKindOfClass:NSArray.class] || events.count > 10000) fail(@"Expected at most 10000 HID events.");
   double duration = 0;
   for (NSDictionary *event in events) {
     double delay = [event[@"delay_ms"] doubleValue];

@@ -1,0 +1,48 @@
+name: Phone task did not finish
+description: Poki ran but could not complete a real task in a specific app (blocked screen, wrong target, would not stop).
+labels: [task-failure]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this when the tools work but a task in a particular app fails. Crashes and tool errors go in a bug report.
+        Remove account names, messages, payment details, and other private screen contents. Agents filing for a user: read [AGENTS.md](https://github.com/JosssphZhou/poki/blob/main/AGENTS.md#file-an-issue).
+  - type: textarea
+    id: task
+    attributes:
+      label: Task
+      description: The task as you gave it, and the app it runs in.
+    validations:
+      required: true
+  - type: textarea
+    id: where
+    attributes:
+      label: Where it stopped
+      description: The screen it got stuck on, and what Poki did or reported there.
+    validations:
+      required: true
+  - type: dropdown
+    id: client
+    attributes:
+      label: Driven by
+      options:
+        - Poki Agent (terminal)
+        - Poki Agent over iMessage or Telegram
+        - Another MCP client (Claude Code, Codex, ...)
+        - Poki iPhone app
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Poki version and commit or app build, the model, the connection, iPhone model, and iOS.
+      placeholder: 0.1.1 f4fd51e, gpt-6.1, USB, iPhone 15 Pro, iOS 27.3
+    validations:
+      required: true
+  - type: textarea
+    id: trace
+    attributes:
+      label: Trace
+      description: Tool calls and results, or the run summary. Remove private text.
+      render: text

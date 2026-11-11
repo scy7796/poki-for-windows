@@ -1,6 +1,7 @@
 // Source: poki-app gateway/fast/task.mjs at 9972d34.
 // Source: poki-mcp/client/fast/task.mjs. Selector matching is retained; actions use MCP tool arguments.
 import { z } from 'zod';
+import { flagOn } from '../../src/element-flags.mjs';
 const text = z.string().min(1).max(2000);
 const id = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/).refine(v => !['unknown'].includes(v));
 const identity = { identifier: z.string().min(1).optional(), element_id: z.string().min(1).optional() };
@@ -31,7 +32,7 @@ export const planSchema = z.strictObject({ ...commonFields, steps: z.array(z.str
   when: z.array(condition).min(1).max(10), action, complete: z.array(condition).min(1).max(20),
 })).min(1).max(50) }).superRefine(validateTask);
 export function matching(elements, selector) {
-  return elements.filter(e => e.visible !== false && e.visible !== 0 && e.enabled !== false
+  return elements.filter(e => flagOn(e.visible) && flagOn(e.enabled)
     && (selector.label_prefix !== undefined
       ? (e.label ?? e.text ?? '').startsWith(selector.label_prefix) && (e.label ?? e.text ?? '').endsWith(selector.label_suffix ?? '')
       : (e.label ?? e.text ?? '') === selector.label || e.text === selector.label)

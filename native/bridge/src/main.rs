@@ -1,13 +1,14 @@
 mod apps;
 mod ax;
 mod configuration;
+mod device_ops;
 mod gesture;
 mod installation;
 mod pasteboard;
 mod remote;
 mod stream;
 
-use gesture::{Drag, Pinch, pinch_contacts};
+use gesture::{Drag, Pinch, Strokes, pinch_contacts};
 use idevice::{
     IdeviceService, ReadWrite, RsdService,
     core_device::hid::{
@@ -21,6 +22,7 @@ use idevice::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{io::Read, time::Duration};
+use stream::NoDisplayService;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 type Touch = UniversalHidServiceClient<Box<dyn ReadWrite>>;
@@ -32,6 +34,72 @@ fn trace(stage: &str) {
         eprintln!("native stage: {stage} (+{} ms)", elapsed.as_millis());
     }
 }
+struct InputMedia {
+    client: idevice::core_device::DisplayServiceClient<Box<dyn ReadWrite>>,
+    receivers: tokio::task::JoinSet<()>,
+    ready_at: tokio::time::Instant,
+}
+
+impl InputMedia {
+    async fn connect(
+        adapter: &mut idevice::tcp::handle::AdapterHandle,
+        rsd: &mut RsdHandshake,
+    ) -> Result<Self> {
+        let stream = stream::start_screen_media_stream(adapter, rsd, 1)
+            .await
+            .map_err(|e| {
+                if e.is::<NoDisplayService>() {
+                    e
+                } else if let Some(io) = e.downcast_ref::<std::io::Error>() {
+                    std::io::Error::new(
+                        io.kind(),
+                        format!("Cannot establish input media session: {e}"),
+                    )
+                    .into()
+                } else {
+                    format!("Cannot establish input media session: {e}").into()
+                }
+            })?;
+        let mut receivers = tokio::task::JoinSet::new();
+        // The transport queues UDP without a bound. Consume packets while holding the input gate open.
+        for socket in [stream.audio_udp, stream.video_udp] {
+            receivers.spawn(async move { while socket.recv().await.is_ok() {} });
+        }
+        trace("input media connected");
+        Ok(Self {
+            client: stream.client,
+            receivers,
+            ready_at: tokio::time::Instant::now() + Duration::from_millis(1000),
+        })
+    }
+}
+
+/// Connecting or opening a phone service failed, so no input reached the phone.
+#[derive(Debug)]
+struct NotSent(Box<dyn std::error::Error + Send + Sync>);
+impl std::fmt::Display for NotSent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+impl std::error::Error for NotSent {}
+fn not_sent_error(
+    error: impl Into<Box<dyn std::error::Error + Send + Sync>>,
+) -> Box<dyn std::error::Error + Send + Sync> {
+    Box::new(NotSent(error.into()))
+}
+
+async fn close_input(media: &mut Option<InputMedia>) -> Result<()> {
+    if let Some(mut media) = media.take() {
+        let result =
+            tokio::time::timeout(Duration::from_secs(2), media.client.stop_media_stream()).await;
+        media.receivers.shutdown().await;
+        trace("input media closed");
+        result??;
+    }
+    Ok(())
+}
+
 struct Keyboard {
     hid: Touch,
     service: MainKeyboardService,
@@ -42,9 +110,11 @@ impl Keyboard {
         rsd: &mut RsdHandshake,
     ) -> Result<Self> {
         trace("keyboard connect");
-        let mut hid = Touch::connect_rsd(adapter, rsd).await?;
+        let mut hid = Touch::connect_rsd(adapter, rsd)
+            .await
+            .map_err(not_sent_error)?;
         trace("keyboard create");
-        let service = hid.create_main_keyboard().await?;
+        let service = hid.create_main_keyboard().await.map_err(not_sent_error)?;
         trace("keyboard ready");
         tokio::time::sleep(Duration::from_millis(150)).await;
         Ok(Self { hid, service })
@@ -55,7 +125,7 @@ impl Keyboard {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 enum Request {
     DisplayInfo,
@@ -81,6 +151,16 @@ enum Request {
     AxTree {
         #[serde(default)]
         include_offscreen: bool,
+    },
+    /// Names the app running as `pid`, for an accessibility root that carries no bundle ID.
+    AppForPid {
+        pid: u32,
+    },
+    /// Reads (`get`, `items`) or sets the general pasteboard's text.
+    Pasteboard {
+        action: String,
+        #[serde(default)]
+        text: Option<String>,
     },
     Tap {
         x: u16,
@@ -122,6 +202,9 @@ enum Request {
         #[serde(default = "drag_duration")]
         duration_ms: u64,
     },
+    DrawStrokes {
+        strokes: Strokes,
+    },
     Key {
         key: String,
         #[serde(default)]
@@ -145,6 +228,12 @@ enum Request {
         #[serde(default)]
         target: Option<pasteboard::Target>,
     },
+    /// Types text as hardware key presses into whatever is being edited, without the pasteboard.
+    TypeKeys {
+        text: String,
+        #[serde(default)]
+        clear: bool,
+    },
 }
 fn tap_duration() -> u64 {
     50
@@ -163,6 +252,18 @@ fn button_interval() -> u64 {
 }
 
 impl Request {
+    fn read_only(&self) -> bool {
+        matches!(
+            self,
+            Self::AxTree { .. }
+                | Self::AppForPid { .. }
+                | Self::Screenshot { .. }
+                | Self::DeviceInfo
+                | Self::DisplayInfo
+                | Self::ListApps
+        )
+    }
+
     fn validate(&self) -> Result<()> {
         match self {
             Self::LaunchApp(request) => request.validate()?,
@@ -209,9 +310,22 @@ impl Request {
                     return Err("Invalid button count or interval_ms".into());
                 }
             }
+            Self::AppForPid { pid: 0 } => return Err("pid must be positive".into()),
+            Self::Pasteboard { action, text } => {
+                device_ops::validate_pasteboard(action, text.as_deref())?
+            }
+            Self::TypeKeys { text, .. } => {
+                if text.chars().count() > 2000 {
+                    return Err("type_keys text is at most 2000 characters".into());
+                }
+                for c in text.chars() {
+                    char_usage(c)?;
+                }
+            }
             Self::TypeText { text, .. } if text.len() > 1024 * 1024 => {
                 return Err("text exceeds 1 MiB".into());
             }
+            Self::DrawStrokes { strokes } => strokes.validate()?,
             _ => {}
         }
         if let Self::Drag {
@@ -248,6 +362,9 @@ async fn main() {
         let args: Vec<String> = std::env::args_os()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
+        if args.len() == 4 && args[1] == "--local-server" {
+            return remote::serve_local(&args[2], &args[3]).await;
+        }
         if args.len() == 4 && args[1] == "--remote-server" {
             return remote::serve_socket(&args[2], &args[3]).await;
         }
@@ -290,21 +407,111 @@ async fn main() {
     }
 }
 
+fn select_usbmux_device(
+    devices: Vec<idevice::usbmuxd::UsbmuxdDevice>,
+    udid: &str,
+) -> Option<idevice::usbmuxd::UsbmuxdDevice> {
+    // A Wi-Fi sync entry can precede the same phone's working cable link.
+    devices
+        .into_iter()
+        .filter(|device| device.udid == udid)
+        .min_by_key(|device| !matches!(device.connection_type, idevice::usbmuxd::Connection::Usb))
+}
+
+#[cfg(test)]
+mod usbmux_selection_tests {
+    use super::select_usbmux_device;
+    use idevice::usbmuxd::{Connection, UsbmuxdDevice};
+
+    fn device(udid: &str, id: u32, connection_type: Connection) -> UsbmuxdDevice {
+        UsbmuxdDevice {
+            udid: udid.into(),
+            device_id: id,
+            connection_type,
+        }
+    }
+    fn wifi(udid: &str, id: u32) -> UsbmuxdDevice {
+        device(udid, id, Connection::Network("127.0.0.1".parse().unwrap()))
+    }
+
+    #[test]
+    fn prefers_the_requested_phones_usb_link_in_either_inventory_order() {
+        for devices in [
+            vec![wifi("target", 1), device("target", 2, Connection::Usb)],
+            vec![device("target", 2, Connection::Usb), wifi("target", 1)],
+        ] {
+            assert_eq!(
+                select_usbmux_device(devices, "target").unwrap().device_id,
+                2
+            );
+        }
+    }
+
+    #[test]
+    fn keeps_the_existing_first_match_when_no_usb_link_is_available() {
+        assert_eq!(
+            select_usbmux_device(vec![wifi("target", 1), wifi("target", 2)], "target")
+                .unwrap()
+                .device_id,
+            1
+        );
+        assert_eq!(
+            select_usbmux_device(
+                vec![device("target", 3, Connection::Unknown("other".into()))],
+                "target"
+            )
+            .unwrap()
+            .device_id,
+            3
+        );
+    }
+
+    #[test]
+    fn never_selects_another_phone_or_changes_the_first_equal_priority_match() {
+        assert_eq!(
+            select_usbmux_device(
+                vec![device("other", 1, Connection::Usb), wifi("target", 2)],
+                "target"
+            )
+            .unwrap()
+            .device_id,
+            2
+        );
+        assert!(
+            select_usbmux_device(vec![device("other", 1, Connection::Usb)], "target").is_none()
+        );
+        assert_eq!(
+            select_usbmux_device(
+                vec![
+                    device("target", 2, Connection::Usb),
+                    device("target", 3, Connection::Usb)
+                ],
+                "target"
+            )
+            .unwrap()
+            .device_id,
+            2
+        );
+    }
+}
+
 async fn connect_device(
     udid: &str,
 ) -> Result<(
     idevice::tcp::handle::AdapterHandle,
     RsdHandshake,
+    u16,
     idevice::provider::UsbmuxdProvider,
 )> {
     let mut mux = UsbmuxdConnection::default().await?;
-    let device = mux.get_device(udid).await?;
+    let device = select_usbmux_device(mux.get_devices().await?, udid)
+        .ok_or(idevice::IdeviceError::DeviceNotFound)?;
     let provider = device.to_provider(UsbmuxdAddr::from_env_var()?, "poki-mcp");
     let proxy = CoreDeviceProxy::connect(&provider).await?;
     let port = proxy.tunnel_info().server_rsd_port;
     let mut adapter = proxy.create_software_tunnel()?.to_async_handle();
     let rsd = RsdHandshake::new(adapter.connect(port).await?).await?;
-    Ok((adapter, rsd, provider))
+    Ok((adapter, rsd, port, provider))
 }
 
 async fn execute(udid: &str, request: Request) -> Result<Value> {
@@ -342,12 +549,22 @@ async fn execute(udid: &str, request: Request) -> Result<Value> {
         ));
     }
     let connection = connect_device(udid).await;
-    let (mut adapter, mut rsd, provider) = match connection {
+    let (mut adapter, mut rsd, _, provider) = match connection {
         Ok(connection) => connection,
         Err(error) if matches!(request, Request::LaunchApp(_)) => return Ok(apps::not_sent(error)),
         Err(error) => return Err(error),
     };
-    execute_connected(&mut adapter, &mut rsd, Some(&provider), request).await
+    let launch = matches!(request, Request::LaunchApp(_));
+    let mut media = None;
+    let result =
+        execute_connected(&mut adapter, &mut rsd, Some(&provider), request, &mut media).await;
+    let closed = close_input(&mut media).await;
+    let output = match result {
+        Err(error) if launch => apps::not_sent(error),
+        result => result?,
+    };
+    closed?;
+    Ok(output)
 }
 
 async fn execute_connected(
@@ -355,11 +572,13 @@ async fn execute_connected(
     rsd: &mut RsdHandshake,
     provider: Option<&dyn idevice::provider::IdeviceProvider>,
     request: Request,
+    media: &mut Option<InputMedia>,
 ) -> Result<Value> {
     if let Request::LaunchApp(request) = request {
-        return Ok(apps::launch(adapter, rsd, request)
-            .await
-            .unwrap_or_else(apps::not_sent));
+        return match apps::launch(adapter, rsd, request).await {
+            Err(error) if error.is::<NotSent>() => Err(error),
+            result => Ok(result.unwrap_or_else(apps::not_sent)),
+        };
     }
     if let Request::Screenshot { path } = request {
         let mut dvt =
@@ -401,17 +620,27 @@ async fn execute_connected(
     if let Request::AxTree { include_offscreen } = request {
         return ax::read_tree(adapter, rsd, include_offscreen).await;
     }
+    if let Request::AppForPid { pid } = request {
+        return apps::app_for_pid(adapter, rsd, pid).await;
+    }
+    if let Request::Pasteboard { action, text } = request {
+        return device_ops::pasteboard(adapter, rsd, &action, text.as_deref()).await;
+    }
     if matches!(request, Request::DisplayInfo) {
         let mut display =
             idevice::core_device::DisplayServiceClient::connect_rsd(adapter, rsd).await?;
         let info = display.get_media_support_info().await?;
         return Ok(serde_json::to_value(info)?);
     }
-    let mut media = stream::start_screen_media_stream(adapter, rsd, 1)
-        .await
-        .map_err(|e| format!("Cannot establish input media session: {e}"))?;
-    trace("media ready");
-    tokio::time::sleep(Duration::from_millis(1000)).await;
+    if media.is_none() {
+        *media = Some(
+            InputMedia::connect(adapter, rsd)
+                .await
+                .map_err(not_sent_error)?,
+        );
+    }
+    tokio::time::sleep_until(media.as_ref().unwrap().ready_at).await;
+    trace("input media ready");
     // The device sometimes drops a touch whose connection closes straight after its last report, with no
     // error. The touch connection therefore stays open through the wait that follows the action;
     // NATIVE.md has the counts.
@@ -425,16 +654,26 @@ async fn execute_connected(
             | Request::InstallApp { .. }
             | Request::UninstallApp { .. }
             | Request::AxTree { .. }
+            | Request::AppForPid { .. }
+            | Request::Pasteboard { .. }
             | Request::Configuration { .. }
             | Request::LaunchApp(_) => {
                 unreachable!()
             }
             Request::Tap { x, y, duration_ms } | Request::LongPress { x, y, duration_ms } => {
-                let hid = touch.insert(Touch::connect_rsd(adapter, rsd).await?);
+                let hid = touch.insert(
+                    Touch::connect_rsd(adapter, rsd)
+                        .await
+                        .map_err(not_sent_error)?,
+                );
                 held_tap(hid, x, y, duration_ms).await?;
             }
             Request::DoubleTap { x, y, duration_ms } => {
-                let hid = touch.insert(Touch::connect_rsd(adapter, rsd).await?);
+                let hid = touch.insert(
+                    Touch::connect_rsd(adapter, rsd)
+                        .await
+                        .map_err(not_sent_error)?,
+                );
                 held_tap(hid, x, y, duration_ms).await?;
                 tokio::time::sleep(Duration::from_millis(80)).await;
                 held_tap(hid, x, y, duration_ms).await?;
@@ -448,7 +687,11 @@ async fn execute_connected(
                 hold_ms,
                 end_hold_ms,
             } => {
-                let hid = touch.insert(Touch::connect_rsd(adapter, rsd).await?);
+                let hid = touch.insert(
+                    Touch::connect_rsd(adapter, rsd)
+                        .await
+                        .map_err(not_sent_error)?,
+                );
                 Drag {
                     x1,
                     y1,
@@ -469,7 +712,11 @@ async fn execute_connected(
                 angle,
                 duration_ms,
             } => {
-                let hid = touch.insert(Touch::connect_rsd(adapter, rsd).await?);
+                let hid = touch.insert(
+                    Touch::connect_rsd(adapter, rsd)
+                        .await
+                        .map_err(not_sent_error)?,
+                );
                 Pinch {
                     x,
                     y,
@@ -480,6 +727,21 @@ async fn execute_connected(
                 }
                 .send(hid)
                 .await?;
+            }
+            Request::DrawStrokes { strokes } => {
+                let hid = touch.insert(
+                    Touch::connect_rsd(adapter, rsd)
+                        .await
+                        .map_err(not_sent_error)?,
+                );
+                let begun = std::time::Instant::now();
+                strokes.send(hid).await?;
+                return Ok(json!({
+                    "sent": true,
+                    "screen_change_verified": false,
+                    "strokes": strokes.0.len(),
+                    "elapsed_ms": begun.elapsed().as_millis() as u64,
+                }));
             }
             Request::Key {
                 key,
@@ -507,7 +769,9 @@ async fn execute_connected(
                 count,
                 interval_ms,
             } => {
-                let mut keyboard = Indigo::connect_rsd(adapter, rsd).await?;
+                let mut keyboard = Indigo::connect_rsd(adapter, rsd)
+                    .await
+                    .map_err(not_sent_error)?;
                 let (code, duration) = button_usage(&button)?;
                 for index in 0..count {
                     if index > 0 {
@@ -517,6 +781,13 @@ async fn execute_connected(
                     tokio::time::sleep(Duration::from_millis(duration)).await;
                     keyboard.send_button(0x0c, code, ButtonState::Up).await?;
                 }
+            }
+            Request::TypeKeys { text, clear } => {
+                let mut keyboard = Keyboard::connect(adapter, rsd).await?;
+                let outcome = type_keys(&mut keyboard, &text, clear).await;
+                let cleanup = keyboard.close().await;
+                outcome?;
+                cleanup?;
             }
             Request::TypeText {
                 text,
@@ -546,12 +817,7 @@ async fn execute_connected(
     .await;
     tokio::time::sleep(Duration::from_millis(300)).await;
     drop(touch);
-    let stop = media.client.stop_media_stream().await;
-    drop(media.audio_udp);
-    drop(media.video_udp);
-    let output = action?;
-    stop?;
-    Ok(output)
+    action
 }
 
 async fn held_tap(hid: &mut Touch, x: u16, y: u16, ms: u64) -> Result<()> {
@@ -614,6 +880,114 @@ fn key_usage(name: &str) -> Result<u64> {
         }
         _ => return Err(format!("Unknown keyboard key: {name}").into()),
     })
+}
+
+/// The US-layout key, and whether it takes shift, that types one character.
+fn char_usage(c: char) -> Result<(u64, bool)> {
+    Ok(match c {
+        'a'..='z' => (4 + (c as u64 - 'a' as u64), false),
+        'A'..='Z' => (4 + (c as u64 - 'A' as u64), true),
+        '1'..='9' => (0x1e + (c as u64 - '1' as u64), false),
+        '0' => (0x27, false),
+        '\n' => (0x28, false),
+        '\t' => (0x2b, false),
+        ' ' => (0x2c, false),
+        '!' => (0x1e, true),
+        '@' => (0x1f, true),
+        '#' => (0x20, true),
+        '$' => (0x21, true),
+        '%' => (0x22, true),
+        '^' => (0x23, true),
+        '&' => (0x24, true),
+        '*' => (0x25, true),
+        '(' => (0x26, true),
+        ')' => (0x27, true),
+        '-' => (0x2d, false),
+        '_' => (0x2d, true),
+        '=' => (0x2e, false),
+        '+' => (0x2e, true),
+        '[' => (0x2f, false),
+        '{' => (0x2f, true),
+        ']' => (0x30, false),
+        '}' => (0x30, true),
+        '\\' => (0x31, false),
+        '|' => (0x31, true),
+        ';' => (0x33, false),
+        ':' => (0x33, true),
+        '\'' => (0x34, false),
+        '"' => (0x34, true),
+        '`' => (0x35, false),
+        '~' => (0x35, true),
+        ',' => (0x36, false),
+        '<' => (0x36, true),
+        '.' => (0x37, false),
+        '>' => (0x37, true),
+        '/' => (0x38, false),
+        '?' => (0x38, true),
+        _ => return Err(format!("type_keys cannot type {c:?}; use type_text").into()),
+    })
+}
+
+/// Presses the keys for `text` back to back on one keyboard session (POKI_TYPE_KEY_MS between
+/// reports, default 12), after Command-A and Delete when `clear` is set. No settle per character.
+async fn type_keys(keyboard: &mut Keyboard, text: &str, clear: bool) -> Result<()> {
+    if clear {
+        chord(keyboard, 0x04, &[0xe3]).await?;
+        chord(keyboard, 0x2a, &[]).await?;
+    }
+    let gap = hid_wait("POKI_TYPE_KEY_MS", 12);
+    let shift = KeyboardUsage::new(0xe1)?;
+    let result: Result<()> = async {
+        for c in text.chars() {
+            let (usage, shifted) = char_usage(c)?;
+            let key = KeyboardUsage::new(usage as u16)?;
+            if shifted {
+                keyboard
+                    .hid
+                    .main_keyboard_key_down(&mut keyboard.service, shift)
+                    .await?;
+            }
+            keyboard
+                .hid
+                .main_keyboard_key_down(&mut keyboard.service, key)
+                .await?;
+            tokio::time::sleep(gap).await;
+            keyboard
+                .hid
+                .main_keyboard_key_up(&mut keyboard.service, key)
+                .await?;
+            if shifted {
+                keyboard
+                    .hid
+                    .main_keyboard_key_up(&mut keyboard.service, shift)
+                    .await?;
+            }
+            tokio::time::sleep(gap).await;
+        }
+        Ok(())
+    }
+    .await;
+    let release_error = keyboard
+        .hid
+        .set_main_keyboard_usages(&mut keyboard.service, [])
+        .await
+        .err();
+    result?;
+    if let Some(error) = release_error {
+        return Err(error.into());
+    }
+    Ok(())
+}
+
+/// A wait between HID reports, from an environment variable (0..10000 ms) or the default.
+fn hid_wait(name: &str, default_ms: u64) -> Duration {
+    Duration::from_millis(
+        std::env::var(name)
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .filter(|ms| *ms <= 10000)
+            .unwrap_or(default_ms),
+    )
 }
 
 fn button_usage(name: &str) -> Result<(u64, u64)> {

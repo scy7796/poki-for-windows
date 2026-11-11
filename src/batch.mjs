@@ -2,16 +2,20 @@ import { checkWork, phase, stopped, stoppingReason } from './work.mjs';
 import { managementTools } from './coordination.mjs';
 import { definitions } from './tools.mjs';
 import { closestTo } from './interaction.mjs';
+import { flagOn } from './element-flags.mjs';
 
 const json = value => ({ type: 'text', text: JSON.stringify(value) });
 const receipt = value => ({ type: 'text', text: JSON.stringify(value, null, 2) });
-const offDevice = new Set(['wait', 'list_devices', 'poki_mcp_status', 'request_human_action']);
-const changesDevice = new Set(['select_device', 'start_simulator', 'shut_down_simulator']);
+export const offDevice = new Set(['wait', 'list_devices', 'poki_mcp_status', 'request_human_action']);
+export const changesDevice = new Set(['select_device', 'start_simulator', 'shut_down_simulator']);
 // Clients show tools under a prefixed name, and models copy it into a step.
-const stepTool = tool => tool.replace(/^mcp__poki-mcp__/, '');
+export const stepTool = tool => tool.replace(/^mcp__poki-mcp__/, '');
+// A step's stop_reason that ends the run, for batch_commands and run_code alike. An ordinary error
+// and a touch with no observed change are left to the caller: stop_on_error, or the script.
+export const stopsRun = reason => Boolean(reason) && reason !== 'error' && reason !== 'no_change';
 
-function invalidStep(command) {
-  if (command.tool === 'batch_commands') return 'Nested batches are not supported.';
+export function invalidStep(command) {
+  if (command.tool === 'batch_commands' || command.tool === 'run_code') return 'Nested batches are not supported, and neither is run_code.';
   if (managementTools.has(command.tool)) return 'Call device management tools outside a batch.';
   const definition = definitions.find(([name]) => name === command.tool);
   if (!definition) {
@@ -33,7 +37,8 @@ function advice(reason, failedStep) {
 }
 
 // A batch is one queued operation, so its steps share a device lookup. A touch is compared with the
-// screen before it; the screen itself is read back once, after the last step.
+// screen before it when a later step depends on that (see Devices.checksStep); the screen itself is
+// read back once, after the last step.
 export async function runBatch(ctx, args) {
   const commands = args.commands.map(command => {
     const tool = stepTool(command.tool);
@@ -51,8 +56,9 @@ export async function runBatch(ctx, args) {
   let stopReason, failed = false, ran = 0, failure, unchanged;
   ctx.inBatch = true;
   try {
-    for (const command of commands) {
+    for (const [index, command] of commands.entries()) {
       const started = performance.now();
+      ctx.batchStep = { next: commands[index + 1], stopOnError };
       let result;
       try {
         checkWork();
@@ -70,7 +76,7 @@ export async function runBatch(ctx, args) {
       // written for the screen it should produce, so with none left, or when the caller allows it, it goes on.
       const reason = result._meta?.stop_reason;
       if (reason === 'no_change') { if (stopOnError && ran < commands.length) { stopReason = reason; unchanged = { step: ran, ...command }; } }
-      else if (reason && reason !== 'error') stopReason = reason;
+      else if (stopsRun(reason)) stopReason = reason;
       if (result.isError) {
         failed = true;
         failure = { step: ran, ...command, error: result.content.find(block => block.type === 'text')?.text };
@@ -79,7 +85,7 @@ export async function runBatch(ctx, args) {
       if (stopReason) break;
       if (changesDevice.has(command.tool)) ctx.resolved = undefined;
     }
-  } finally { ctx.inBatch = false; }
+  } finally { ctx.inBatch = false; ctx.batchStep = undefined; }
   const summary = unverified ? { verified: false } : {};
   // Reading a simulator that a step just shut down would boot it again.
   const last = commands.slice(0, ran).findLast(command => !offDevice.has(command.tool));
@@ -94,7 +100,7 @@ export async function runBatch(ctx, args) {
     if (failure) {
       Object.assign(summary, { failed_step: failure, remaining_steps: commands.slice(failure.step - 1), next: advice(stopReason, failure.step) });
       if (failure.tool === 'fill' && /No visible element matches|Requested field is not visible/.test(failure.error ?? '')) {
-        const fields = (ctx.seen?.elements ?? []).filter(element => element.visible !== false && element.visible !== 0 && /^(?:AX|XCUIElementType)?(?:Secure)?(?:TextField|TextArea|TextView|SearchField)$/i.test(element.type ?? element.role ?? ''))
+        const fields = (ctx.seen?.elements ?? []).filter(element => flagOn(element.visible) && /^(?:AX|XCUIElementType)?(?:Secure)?(?:TextField|TextArea|TextView|SearchField)$/i.test(element.type ?? element.role ?? ''))
           .map(element => element.identifier || element.label || element.placeholder);
         if (fields.length === 1 && fields[0]) {
           const { field: _field, ref: _ref, x: _x, y: _y, ...rest } = failure.arguments ?? {};

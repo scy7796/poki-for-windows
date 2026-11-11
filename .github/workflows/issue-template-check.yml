@@ -1,0 +1,33 @@
+name: Issue template check
+
+# Issue events only: this never runs on pushes or pull requests.
+# "opened" fires only for issues created after this file is on the default branch,
+# so existing issues are never touched. "edited" acts only on issues this check
+# already labeled needs-template, to take the label off once they match a form.
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: issue-template-check-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    if: >-
+      github.event.action == 'opened' ||
+      contains(github.event.issue.labels.*.name, 'needs-template')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+      - run: node .github/scripts/check-issue-template.mjs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

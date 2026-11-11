@@ -1,0 +1,222 @@
+# Shared app and widget configuration for the local-VPN and external-connection builds.
+name: Poki
+options:
+  bundleIdPrefix: nz.zheha.poki
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+packages:
+  PokiCore:
+    path: ../ios/PokiCore
+  # Google's WebRTC, prebuilt (BSD-3-Clause), for the voice conversation with the Realtime API.
+  WebRTC:
+    url: https://github.com/stasel/WebRTC.git
+    exactVersion: 155.0.0
+  # pi (Mario Zechner's pi-mono agent loop and model providers), ported to Swift by Miguel de Icaza
+  # (MIT). The chat's model loop is PiSwiftAgent; PiSwiftAI brings the providers and the ChatGPT login.
+  PiSwift:
+    url: https://github.com/xibbon/PiSwift.git
+    revision: f8696524cf41ca0a7f42f5b230eafa443daececd
+settings:
+  base:
+    POKI_BUNDLE_ID: nz.zheha.poki
+    POKI_APP_GROUP: group.nz.zheha.poki
+    POKI_DISPLAY_NAME: Poki
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    # iPhone and iPad; on iPad (windows, Stage Manager) and on the iPhone Duo's inner display Poki
+    # sits beside the app it drives, so iPad takes every orientation and any window size.
+    TARGETED_DEVICE_FAMILY: "1,2"
+    DEBUG_INFORMATION_FORMAT: dwarf
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+targets:
+  Poki:
+    type: application
+    platform: iOS
+    sources:
+      - path: Poki
+      - path: Shared
+      # The mailbox the app and the Poki keyboard share (tested on its own: KeyboardShared/Package.swift).
+      - path: KeyboardShared/Sources/KeyboardShared
+        group: KeyboardShared
+      # The gym scorecard (native/ios-gym/check), run in-process by the Debug probe's `gym` mode.
+      - path: ../ios-gym/check/GymScorecard.swift
+        group: Poki/Debug
+    info:
+      path: Poki/Info.plist
+      properties:
+        CFBundleDisplayName: $(POKI_DISPLAY_NAME)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        PokiAppGroup: $(POKI_APP_GROUP)
+        # English and Simplified Chinese (Shared/Localizable.xcstrings, Poki/InfoPlist.xcstrings); Poki
+        # follows the iPhone's language.
+        CFBundleDevelopmentRegion: en
+        CFBundleLocalizations: [en, zh-Hans]
+        # Every page is the website's blue (or the night blue): white status bar text throughout.
+        UIStatusBarStyle: UIStatusBarStyleLightContent
+        UIViewControllerBasedStatusBarAppearance: false
+        UILaunchScreen:
+          UIColorName: AccentColor
+          UIImageName: Bear
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        NSSupportsLiveActivities: true
+        NSSupportsLiveActivitiesFrequentUpdates: true
+        # Geist (SIL OFL 1.1, Shared/Fonts) for the Live Activity, in both bundles: the widget
+        # extension draws the island and falls back to SF Pro without its own copy.
+        UIAppFonts: [Geist-Regular.ttf, Geist-Medium.ttf, Geist-SemiBold.ttf, Geist-Bold.ttf, Geist-Black.ttf]
+        # While Poki is on, background location (with the blue location pill) keeps the app, and with it
+        # the relay connection and the launcher, running; silent audio is the fallback. Poki never reads
+        # or sends the location itself.
+        UIBackgroundModes: [location, audio, processing]
+        # iOS 26: the continued processing task that keeps Poki up while it is on (ContinuedRun). The
+        # signer rewrites the nz.zheha.poki prefix to the signed bundle id.
+        BGTaskSchedulerPermittedIdentifiers: ["$(POKI_BUNDLE_ID).run.*"]
+        # Documents/AgentBackup holds the agent's memory backup, which Poki Setup copies off and puts back.
+        UIFileSharingEnabled: true
+        NSLocationWhenInUseUsageDescription: Poki keeps running in the background while it is on, so agents can reach this iPhone. Poki does not record or send your location.
+        NSLocationAlwaysAndWhenInUseUsageDescription: Poki keeps running in the background while it is on, so agents can reach this iPhone. Poki does not record or send your location.
+        CFBundleURLTypes:
+          - CFBundleURLName: nz.zheha.poki
+            CFBundleURLSchemes: [poki]
+        NSLocalNetworkUsageDescription: Poki connects to this iPhone's own developer services to pair with it and to run the automation, and to the voice bridge on your Mac.
+        NSCameraUsageDescription: Poki uses the camera only to scan the pairing code Poki Setup shows on your computer.
+        NSMicrophoneUsageDescription: Poki listens while you talk to it in Voice, and sends that audio to OpenAI to understand what you ask.
+        NSSpeechRecognitionUsageDescription: Without an OpenAI key, Poki turns what you say in Voice into text on this iPhone and sends the text to your chosen model.
+        # The voice bridge runs on the person's Mac on the local network, over plain HTTP.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        NSBonjourServices: [_remotepairing-pairable-host._tcp, _remotepairing-manual-pairing._tcp]
+        LSApplicationQueriesSchemes: [karing, surge, loon, shadowrocket, sing-box, stash, quantumult-x, clashmi]
+        # A pairing file sent by AirDrop, Files or Poki Setup opens in Poki (Setup > Pair This iPhone).
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Pairing File
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [nz.zheha.poki.pairing, com.apple.property-list]
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: nz.zheha.poki.pairing
+            UTTypeDescription: iPhone pairing file
+            UTTypeConformsTo: [public.data]
+            UTTypeTagSpecification:
+              public.filename-extension: [mobiledevicepairing]
+        ITSAppUsesNonExemptEncryption: false
+    entitlements:
+      path: Poki/Poki.entitlements
+      properties:
+        com.apple.security.application-groups: [$(POKI_APP_GROUP)]
+    dependencies:
+      - target: PokiWidgets
+      - target: PokiKeyboard
+      - package: PokiCore
+      - package: WebRTC
+      - package: PiSwift
+        product: PiSwiftAgent
+      - package: PiSwift
+        product: PiSwiftAI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(POKI_BUNDLE_ID)
+        # The app draws with the system's colours; the Live Activity keeps the website's blue (Site).
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) POKI_APP
+        # PokiLauncher: the Rust static library from native/launcher, built for aarch64-apple-ios
+        # before this project (see .github/workflows/ios-app.yml).
+        SWIFT_OBJC_BRIDGING_HEADER: Poki/Runtime/Poki-Bridging-Header.h
+        HEADER_SEARCH_PATHS: $(SRCROOT)/../launcher/include $(SRCROOT)/Poki/Native
+        # The XCTest libraries of the mounted developer disk image, loaded at run time (Poki/Native).
+        LD_RUNPATH_SEARCH_PATHS: $(inherited) @executable_path/Frameworks /System/Developer/usr/lib /System/Developer/Library/PrivateFrameworks /System/Developer/Library/Frameworks
+        LIBRARY_SEARCH_PATHS: $(SRCROOT)/../launcher/target/aarch64-apple-ios/release
+        "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]": $(SRCROOT)/../launcher/target/aarch64-apple-ios-sim/release
+        OTHER_LDFLAGS: [-lpoki_launcher, -lc++, -framework, Security, -framework, SystemConfiguration]
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+  PokiKeyboard:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: PokiKeyboard
+      - path: KeyboardShared/Sources/KeyboardShared
+        group: KeyboardShared
+    info:
+      path: PokiKeyboard/Info.plist
+      properties:
+        CFBundleDisplayName: Poki
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        PokiAppGroup: $(POKI_APP_GROUP)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.keyboard-service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).KeyboardViewController
+          NSExtensionAttributes:
+            IsASCIICapable: true
+            PrefersRightToLeft: false
+            # "mul": no language of its own, so iOS does not list it as an English keyboard.
+            PrimaryLanguage: mul
+            RequestsOpenAccess: true
+    entitlements:
+      path: PokiKeyboard/PokiKeyboard.entitlements
+      properties:
+        com.apple.security.application-groups: [$(POKI_APP_GROUP)]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(POKI_BUNDLE_ID).keyboard
+        APPLICATION_EXTENSION_API_ONLY: YES
+  PokiTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [PokiTests]
+    dependencies:
+      - target: Poki
+      - package: PokiCore
+      - package: PiSwift
+        product: PiSwiftAI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(POKI_BUNDLE_ID).tests
+        GENERATE_INFOPLIST_FILE: YES
+        # @testable import Poki re-reads the app's bridging header, which includes the launcher's C
+        # header and Poki/Native's headers.
+        HEADER_SEARCH_PATHS: $(SRCROOT)/../launcher/include $(SRCROOT)/Poki/Native
+  PokiWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: PokiWidgets
+      - path: Shared
+    info:
+      path: PokiWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: Poki
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        PokiAppGroup: $(POKI_APP_GROUP)
+        CFBundleDevelopmentRegion: en
+        CFBundleLocalizations: [en, zh-Hans]
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+        UIAppFonts: [Geist-Regular.ttf, Geist-Medium.ttf, Geist-SemiBold.ttf, Geist-Bold.ttf, Geist-Black.ttf]
+    entitlements:
+      path: PokiWidgets/PokiWidgets.entitlements
+      properties:
+        com.apple.security.application-groups: [$(POKI_APP_GROUP)]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(POKI_BUNDLE_ID).widgets
+
+schemes:
+  Poki:
+    build:
+      targets:
+        Poki: all
+        PokiWidgets: all
+        PokiTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets: [PokiTests]
+    archive:
+      config: Release

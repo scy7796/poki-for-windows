@@ -1,0 +1,89 @@
+# Pre-alpha: every merge into main is built and published to the Pre-alpha channel, with no tag to
+# push and no step to wait for. One macOS job does it all (version, build, tag, publish), because
+# each extra job costs a runner pickup. It runs on main so that the caches it saves are the ones
+# every later run can read; a run from a tag could only read main's caches, and main had none, so
+# every release build used to start cold (about 20 minutes, 9 of them in PiSwiftAI).
+#
+# The build number is the commit count of main, so it only goes up while main is never rewritten.
+# Tag: app-<VERSION>-prealpha.<count>; release: the rolling app-prealpha-latest, mirrored to the old
+# ios-prealpha-latest for Poki Setup 0.2.2 and earlier (docs/release-channels.md).
+name: Pre-alpha
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**/*.md', 'docs/**', '.github/ISSUE_TEMPLATE/**', '.github/channels.json', '.github/workflows/promote-*.yml']
+  # Re-publish main's head by hand (for example after a failed run).
+  workflow_dispatch:
+
+# One pre-alpha at a time. A merge that lands while one builds waits; if several land, only the
+# newest waits and the ones in between are skipped (each build includes them).
+concurrency:
+  group: prealpha
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  prealpha:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        # Every commit (for the count) but no file contents beyond this one.
+        with: { fetch-depth: 0, filter: 'tree:0' }
+
+      - id: v
+        name: Version and build number
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d ' \n' < native/ios-app/VERSION)"
+          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::native/ios-app/VERSION is not X.Y.Z"; exit 1; }
+          BUILD="$(git rev-list --count HEAD)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          echo "Poki $VERSION ($BUILD) from $(git log -1 --format='%h %s')"
+
+      - id: build
+        uses: ./.github/actions/build-ipa
+        with:
+          version: ${{ steps.v.outputs.version }}
+          build: ${{ steps.v.outputs.build }}
+          editions: external
+
+      # Kept 90 days: an alpha or beta promoted later copies this exact file (promote-alpha.yml).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Poki-unsigned
+          path: out/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish to app-prealpha-latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/publish-rolling.sh prealpha "${{ steps.v.outputs.version }}" "${{ steps.v.outputs.build }}" out
+
+      # After publishing, so saving never delays the release. Same paths as the build-ipa action.
+      - if: steps.build.outputs.rust-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            native/launcher/target
+          key: ${{ steps.build.outputs.rust-key }}
+      - uses: actions/cache/save@v4
+        with:
+          path: |
+            build/app-external
+            build/app-local
+            ~/Library/Developer/Xcode/DerivedData/ModuleCache.noindex
+          key: ipa-fast-${{ github.sha }}
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Poki v${{ steps.v.outputs.version }} (${{ steps.v.outputs.build }}) Pre-alpha" >> "$GITHUB_STEP_SUMMARY"
+          echo "Rust library from cache: ${{ steps.build.outputs.rust-hit || 'false' }}" >> "$GITHUB_STEP_SUMMARY"

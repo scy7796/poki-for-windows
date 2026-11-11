@@ -1,0 +1,3 @@
+# For signing without Network Extensions: no packet-tunnel entitlement or embedded tunnel.
+include: project-base.yml
+name: PokiExternal

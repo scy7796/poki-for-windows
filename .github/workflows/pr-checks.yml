@@ -1,0 +1,71 @@
+# Quick checks on every PR, on Linux and Windows so they never take one of the 5 macOS runners the
+# builds share: Poki Setup's core tests (release picking, pairing, signing), the Rust lockfiles
+# (a stale Cargo.lock once broke a release build), and the workflows themselves. The macOS work
+# (the app, the Gym) runs on main and on promotions only.
+name: PR checks
+
+on:
+  pull_request:
+    branches: [main, 'release/**']
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  desktop-core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: desktop, save-if: false }
+      - run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - run: cargo test -p poki-setup-core -p poki-setup-cli --manifest-path desktop/Cargo.toml
+        env: { POKI_SETUP_FILE_SECRETS: "1" }
+
+  lockfiles:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cargo.lock matches Cargo.toml (desktop, launcher)
+        run: |
+          set -euo pipefail
+          cargo metadata --locked --format-version 1 --manifest-path desktop/Cargo.toml > /dev/null
+          native/launcher/fetch-idevice.sh
+          cargo metadata --locked --format-version 1 --manifest-path native/launcher/Cargo.toml > /dev/null
+
+  windows-auth:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: desktop, save-if: false }
+      - name: Apple sign-in regression tests (Windows)
+        run: |
+          cargo test --locked -p poki-setup-core --manifest-path desktop/Cargo.toml apple::gsa::
+
+  workflows:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: actionlint
+        run: |
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          # Workflow syntax, expressions and runner labels. shellcheck's style notes on the older
+          # workflows' scripts are not checked here (-shellcheck=).
+          ./actionlint -color -shellcheck=
+      - name: Release scripts
+        run: |
+          bash -n .github/scripts/publish-rolling.sh
+          python3 -m py_compile .github/scripts/promotion.py
+          python3 -c "import json; json.load(open('.github/channels.json'))"

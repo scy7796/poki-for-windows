@@ -30,6 +30,7 @@ export class MessageRunner {
     if (this.task && !this.task.finished) {
       if (text.toLowerCase() === '/stop') { await this.task.stop(); return; }
       this.task.steer(text);
+      void this.send('Added to the current task. Send /stop to stop it now.');
       return;
     }
     if (this.finished) await this.finished;
@@ -48,7 +49,8 @@ export class MessageRunner {
         const directory = join(this.options.stateDirectory, 'tasks');
         await mkdir(directory, { recursive: true, mode: 0o700 });
         await writeFile(join(directory, `${snapshot.id}.json`), JSON.stringify(snapshot, null, 2), { mode: 0o600 });
-        await this.send(openingOnly ? snapshot.result : `${snapshot.phase}: ${snapshot.result}`, { kind: 'final', taskId: snapshot.id });
+        const image = snapshot.resultShot ? this.task?.shots?.get(snapshot.resultShot) : undefined;
+        await this.send(openingOnly ? snapshot.result : `${snapshot.phase}: ${snapshot.result}`, { kind: 'final', taskId: snapshot.id, image });
       },
     });
     this.task = task;

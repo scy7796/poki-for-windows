@@ -12,3 +12,4 @@ test/shim.exe
 
 __pycache__/
 *.pyc
+native/launcher/target/

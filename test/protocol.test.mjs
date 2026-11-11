@@ -15,7 +15,7 @@ import { fixture, value } from './fixture.mjs';
 
 // start_simulator, shut_down_simulator, build_and_run, download_app_container and open_url
 // need Xcode, so the catalog a Windows host lists is those five short of the macOS one.
-const catalogSize = isWin ? 53 : 58;
+const catalogSize = isWin ? 58 : 63;
 
 test('fill asks for a daemon restart after native or JavaScript updates and recovers after restart', async t => {
   for (const updated of ['native', 'JavaScript']) await t.test(updated, async t => {
