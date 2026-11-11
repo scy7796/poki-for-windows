@@ -14,20 +14,16 @@ const ocrAllowanceMs = 12000;
 const strings = e => [e.label, e.text, e.value, e.identifier, e.placeholder].filter(v => typeof v === 'string');
 // Join recognizer-spaced CJK characters without removing English word boundaries
 // or the spaces between CJK and other text. Windows OCR also spaces out numbers and
-// punctuation inside CJK text ("微信 ( 714 )"), which a caller never writes, so in a
-// string that contains CJK a space survives only between two Latin words, or between a
-// Latin word and a number.
-const cjk = '\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff';
-const hasCjk = new RegExp(`[${cjk}]`, 'u');
+// punctuation inside CJK text ("微信 ( 714 )"), which a caller never writes, so a space
+// survives only between two Latin words, or between a Latin word and a number.
 const word = /[\p{Script=Latin}0-9]/u, digit = /[0-9]/;
 const spaceInCjk = (space, offset, whole) => {
   const before = whole[offset - 1] ?? '', after = whole[offset + space.length] ?? '';
   return word.test(before) && word.test(after) && !(digit.test(before) && digit.test(after)) ? ' ' : '';
 };
-const normalize = v => {
-  const n = v.normalize('NFKC').toLocaleLowerCase().trim();
-  return hasCjk.test(n) ? n.replace(/\s+/gu, spaceInCjk) : n;
-};
+// Every string is folded this way, with or without CJK: a pattern such as 'touch id for “'
+// has none, and must still be found inside 'Touch ID for “微信”'.
+const normalize = v => v.normalize('NFKC').toLocaleLowerCase().trim().replace(/\s+/gu, spaceInCjk);
 const visible = e => flagOn(e.visible);
 // Alert and prompt text is compared against the Chinese entries in data/interaction.json, and
 // a recognizer writes spaces between those characters, so it needs the same normalisation as

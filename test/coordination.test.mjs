@@ -397,8 +397,9 @@ test('launch reconnects a stalled foreground observation without relaunching the
  assert.notEqual(result.isError,true,result.content[0].text);
  assert.equal(value(result).foreground_verified,true);
  const events=await f.events();assert.equal(events.filter(e=>e.op==='launch_app').length,1);
- const processes=events.filter(e=>e.tool==='poki-native'),helpers=processes.filter(e=>e.args[0]==='--local-server'),current=helpers.at(-1).pid;
- assert.notEqual(helpers[0].pid,current);assert.ok(await processGone(helpers[0].pid),'the first native helper should have ended');
+ const processes=events.filter(e=>e.tool==='poki-native'),helpers=processes.filter(e=>e.args[0]==='--local-server'),current=helpers.at(-1)?.pid;
+ // Windows has no standing USB helper: each call starts its own, so there is no current one to spare below.
+ if(!isWin){assert.notEqual(helpers[0].pid,current);assert.ok(await processGone(helpers[0].pid),'the first native helper should have ended');}
  // ESP-80 keeps the current local helper running by design; the abandoned read and the first helper that ran it must still exit.
  for(const process of processes.filter(p=>p.pid!==current))assert.ok(await processGone(process.pid),'every other native helper should have ended');
  await f.set({axHangs:10});const start=events.length,controller=new AbortController();
