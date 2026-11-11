@@ -40,6 +40,25 @@ impl std::fmt::Display for NoDisplayService {
 }
 impl std::error::Error for NoDisplayService {}
 
+/// The phone refused the video stream because an app holds its microphone or camera, as a call,
+/// a recording or dictation does. Input needs that stream, so nothing can be sent until the app lets go.
+#[derive(Debug)]
+pub struct MediaInUse;
+impl std::fmt::Display for MediaInUse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "Cannot establish input media session: the iPhone's microphone or camera is in use",
+        )
+    }
+}
+impl std::error::Error for MediaInUse {}
+
+// CoreDeviceError 9022, "The device microphone or camera is currently in use." The library hands the
+// refusal over as the debug text of its dictionary, so the code is read out of that text.
+pub(crate) fn media_in_use(refusal: &str) -> bool {
+    refusal.contains("com.apple.dt.CoreDeviceError") && refusal.contains("Integer(9022)")
+}
+
 /// Connect the displayservice and start the audio+video screen-sharing session.
 ///
 /// Mirrors what Device Hub does: an audio stream is started first to establish
@@ -138,10 +157,16 @@ pub async fn start_screen_media_stream(
         display_id,
         client_session_id,
     );
-    let _answer = client
-        .start_media_stream(params)
-        .await
-        .map_err(|e| format!("video startMediaStream failed: {e:?}"))?;
+    let _answer = client.start_media_stream(params).await.map_err(
+        |e| -> Box<dyn std::error::Error + Send + Sync> {
+            let refusal = format!("{e:?}");
+            if media_in_use(&refusal) {
+                Box::new(MediaInUse)
+            } else {
+                format!("video startMediaStream failed: {refusal}").into()
+            }
+        },
+    )?;
     log!("video stream started (session {client_session_id})");
 
     Ok(ScreenMediaStream {

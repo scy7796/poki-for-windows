@@ -56,3 +56,15 @@ test('Input on a phone without displayservice reports nothing sent and names the
   assert.equal(result.outcome, 'not_sent');
   assert.match(result.instruction, /node bin\/prepare-device\.mjs fixture-phone/);
 });
+
+test('Input refused while the microphone or camera is in use reports nothing sent and says what to end', async t => {
+  const f = await fixture(t);
+  // The native helper's reply for that refusal; remote.rs an_input_refused_while_the_microphone_is_in_use_says_so proves it.
+  await f.set({ inputReply: { isError: true, outcome: 'not_sent', stop_reason: 'error', sent: false, screen_change_verified: false, reason: 'media_in_use', error: "Cannot establish input media session: the iPhone's microphone or camera is in use", instruction: 'Nothing reached the iPhone. Keep it connected and unlocked, then retry.' } });
+  const failed = await f.call('press_key', { key: 'return' });
+  assert.equal(failed.isError, true);
+  const result = value(failed);
+  assert.equal(result.outcome, 'not_sent');
+  assert.match(result.instruction, /microphone or camera/);
+  assert.doesNotMatch(result.instruction, /unlocked/);
+});

@@ -18,7 +18,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-blue" alt="License: AGPL-3.0-only"></a>
   <img src="https://img.shields.io/badge/host-Windows%2011-0078D4" alt="Host: Windows 11">
   <img src="https://img.shields.io/badge/phone-iOS%2027-lightgrey" alt="Phone: iOS 27">
-  <img src="https://img.shields.io/badge/tests-183%20pass%20%7C%200%20fail-brightgreen" alt="Tests: 183 pass, 0 fail">
+  <img src="https://img.shields.io/badge/tests-184%20pass%20%7C%200%20fail-brightgreen" alt="Tests: 184 pass, 0 fail">
 </p>
 
 MCP 服务、工具和 Rust 桥都和 Poki 一样。变的是电脑怎么连到手机、状态文件放在哪、用哪个 OCR 引擎读屏，以及去掉了几个离不开 Xcode 的工具。只有当 pymobiledevice3 下载不到你这个 iOS 版本的开发者磁盘映像时，才需要找一台 Mac。
@@ -68,7 +68,7 @@ claude mcp add --scope user poki-mcp -- node "$PWD\src\stdio.mjs"
 
 | 项目 | 结果 |
 | --- | --- |
-| `npm test` | 共 282 个：183 个通过，0 个失败，99 个跳过（2026-11-11 同步上游之后跑的）。每个跳过都写了原因，其中 38 个需要 iOS 模拟器，而模拟器只有 Xcode 才有；41 个测的是上游的 iPhone App 安装器和语音桥，本移植不带这两样。 |
+| `npm test` | 共 283 个：184 个通过，0 个失败，99 个跳过（2026-11-11 同步上游之后跑的）。每个跳过都写了原因，其中 38 个需要 iOS 模拟器，而模拟器只有 Xcode 才有；41 个测的是上游的 iPhone App 安装器和语音桥，本移植不带这两样。 |
 | OCR，一张 1320×2868 的截图 | 202 ms，7 个测试字符串全部读对（PP-OCRv6，跑在 DirectML 上）。Windows 自带 OCR 用了 203 ms，读对 5 个。 |
 | USB 下 `take_screenshot` | 1282 ms，含 OCR |
 | USB 下 `list_elements` | 读无障碍树 1637 ms，无障碍树为空时改走 OCR，407 ms |

@@ -573,6 +573,7 @@ export class Devices {
     try { result = await phase('input', () => this.bridge(command)); }
     catch (error) { result = { outcome: 'unknown', error: error.message, stopped: Boolean(stopped(error)), stop_reason: stopped(error) ? stoppingReason(error) : 'unknown', instruction: 'Input may have been delivered. Inspect the screen before retrying.', isError: true }; }
     if (result.reason === 'display_service_missing') result = { ...result, instruction: `No input was sent. This iPhone does not provide com.apple.coredevice.displayservice, which touch and text input need. Screenshots and accessibility work without it, so they do not show whether input is available. Run node bin/prepare-device.mjs ${target.id} from the Poki checkout to install a developer disk image that provides it. See docs/physical-iphone.md#touch-and-text-input-fail.` };
+    if (result.reason === 'media_in_use') result = { ...result, instruction: 'No input was sent. An app on this iPhone is using the microphone or camera (a call, a recording, dictation or a voice assistant), and the iPhone accepts no touch or text input from here while it does. Screenshots and accessibility still work. Ask the user to end the call or recording, then retry.' };
     this.lastInputAt = performance.now();
     this.lastInputCompletedAt = new Date().toISOString();
     if (target.kind === 'physical') {

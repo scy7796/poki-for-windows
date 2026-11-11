@@ -22,7 +22,7 @@ use idevice::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{io::Read, time::Duration};
-use stream::NoDisplayService;
+use stream::{MediaInUse, NoDisplayService};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 type Touch = UniversalHidServiceClient<Box<dyn ReadWrite>>;
@@ -48,7 +48,7 @@ impl InputMedia {
         let stream = stream::start_screen_media_stream(adapter, rsd, 1)
             .await
             .map_err(|e| {
-                if e.is::<NoDisplayService>() {
+                if e.is::<NoDisplayService>() || e.is::<MediaInUse>() {
                     e
                 } else if let Some(io) = e.downcast_ref::<std::io::Error>() {
                     std::io::Error::new(

@@ -334,7 +334,7 @@ privilege, and the code that watches the bridge edits the launcher's sibling scr
 while touching the launcher so its build marker moves.
 
 ```
-npm test   -> 282 tests: 183 pass, 0 fail, 99 skipped
+npm test   -> 283 tests: 184 pass, 0 fail, 99 skipped
 ```
 
 The skips are `{ skip: <reason> }` with the reason attached, never a silently dropped

@@ -1,7 +1,7 @@
 #[cfg(not(test))]
 use super::connect_device;
 use super::{
-    InputMedia, NoDisplayService, NotSent, Request, Result, close_input, execute, execute_connected,
+    InputMedia, MediaInUse, NoDisplayService, NotSent, Request, Result, close_input, execute, execute_connected,
 };
 use idevice::{
     remote_pairing::{
@@ -357,6 +357,12 @@ fn unsent_reply(
             {
                 reply["reason"] = "display_service_missing".into();
             }
+            if error
+                .downcast_ref::<NotSent>()
+                .is_some_and(|error| error.0.is::<MediaInUse>())
+            {
+                reply["reason"] = "media_in_use".into();
+            }
             Ok(reply)
         }
     }
@@ -691,6 +697,19 @@ mod tests {
                 return true;
             }
         }
+    }
+
+    #[test]
+    fn an_input_refused_while_the_microphone_is_in_use_says_so() {
+        // What an iPhone on iOS 27.0.1 answered while an app held its microphone, as the library prints it.
+        let refusal = r#"CoreDevice(DeviceError("Dictionary({\"code\": Integer(9022), \"userInfo\": Dictionary({\"NSLocalizedDescription\": String(\"The device microphone or camera is currently in use.\")}), \"domain\": String(\"com.apple.dt.CoreDeviceError\")})"))"#;
+        assert!(crate::stream::media_in_use(refusal));
+        assert!(!crate::stream::media_in_use(&refusal.replace("9022", "1000")));
+        let tap = serde_json::from_value(json!({"op":"tap","x":100,"y":200})).unwrap();
+        let reply = unsent_reply(&tap, Box::new(NotSent(Box::new(MediaInUse)))).unwrap();
+        assert_eq!(reply["outcome"], "not_sent", "{reply}");
+        assert_eq!(reply["reason"], "media_in_use", "{reply}");
+        assert!(!reply["error"].as_str().unwrap().contains("Dictionary"), "{reply}");
     }
 
     #[tokio::test]

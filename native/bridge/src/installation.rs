@@ -121,7 +121,8 @@ pub async fn uninstall(provider: &dyn IdeviceProvider, bundle_id: &str) -> Resul
     Ok(result)
 }
 
-#[cfg(test)]
+// The test dials a Unix socket path, which usbmuxd does not have on Windows.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     #[tokio::test]

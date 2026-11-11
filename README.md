@@ -18,7 +18,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-blue" alt="License: AGPL-3.0-only"></a>
   <img src="https://img.shields.io/badge/host-Windows%2011-0078D4" alt="Host: Windows 11">
   <img src="https://img.shields.io/badge/phone-iOS%2027-lightgrey" alt="Phone: iOS 27">
-  <img src="https://img.shields.io/badge/tests-183%20pass%20%7C%200%20fail-brightgreen" alt="Tests: 183 pass, 0 fail">
+  <img src="https://img.shields.io/badge/tests-184%20pass%20%7C%200%20fail-brightgreen" alt="Tests: 184 pass, 0 fail">
 </p>
 
 Same MCP server, same tools, same Rust bridge as Poki. What changes is how the PC reaches the phone, where state lives, which OCR engine reads the screen, and which tools are left out because they need Xcode. You only need a Mac if pymobiledevice3 cannot download the developer disk image for your iOS version.
@@ -68,7 +68,7 @@ All numbers below come from one Windows 11 PC (Intel Core Ultra 9) and one iPhon
 
 | What | Result |
 | --- | --- |
-| `npm test` | 282 tests: 183 pass, 0 fail, 99 skipped (run after the 2026-11-11 upstream sync). Every skip names its reason; 38 need the iOS Simulator, which only Xcode provides, and 41 cover upstream's iPhone app installer and voice bridge, which this port does not ship. |
+| `npm test` | 283 tests: 184 pass, 0 fail, 99 skipped (run after the 2026-11-11 upstream sync). Every skip names its reason; 38 need the iOS Simulator, which only Xcode provides, and 41 cover upstream's iPhone app installer and voice bridge, which this port does not ship. |
 | OCR, one 1320×2868 screenshot | 202 ms, 7 of 7 test strings read correctly (PP-OCRv6 on DirectML). Windows' built-in OCR took 203 ms and got 5 of 7. |
 | `take_screenshot` over USB | 1282 ms, OCR included |
 | `list_elements` over USB | 1637 ms from accessibility, 407 ms from OCR when accessibility is empty |
