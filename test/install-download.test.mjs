@@ -1,4 +1,4 @@
-import test from 'node:test';
+import nodeTest from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -6,6 +6,12 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { ensureSetupApp } from '../src/install/setup-app.mjs';
 import { run } from '../src/install/run.mjs';
+import { isWin } from '../src/os.mjs';
+
+// These cover upstream's standalone iPhone installer (src/install, bin/install-iphone.mjs, Poki Setup).
+// The Windows port does not ship it, so a Windows host skips them; elsewhere they run as upstream's.
+const standalone = isWin && "covers upstream's standalone iPhone installer, which this Windows port does not ship";
+const test = (name, ...rest) => nodeTest(name, { ...(typeof rest[0] === 'object' ? rest.shift() : {}), ...(standalone ? { skip: standalone } : {}) }, ...rest);
 
 const asset = name => ({ name, browser_download_url: `https://github.com/assets/${name}`, url: `https://api.github.com/assets/${name}` });
 const hash = text => createHash('sha256').update(text).digest('hex');

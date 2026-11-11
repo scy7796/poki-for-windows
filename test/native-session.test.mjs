@@ -3,8 +3,13 @@ import assert from 'node:assert/strict';
 import { writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fixture, value } from './fixture.mjs';
+import { isWin } from '../src/os.mjs';
 
-test('consecutive local MCP observations retain the native helper process', async t => {
+// These drive the resident local helper (--local-server), which listens on a Unix domain socket.
+// Windows has none, so a phone on the cable is asked one helper process per request there.
+const socketHelper = isWin && 'drives the resident local helper over a Unix domain socket; Windows starts one helper per request';
+
+test('consecutive local MCP observations retain the native helper process', { skip: socketHelper }, async t => {
   const f = await fixture(t, { beforeStart: async dir => {
     await writeFile(join(dir, 'build/poki-native'), `#!/usr/bin/env node
 import { createInterface } from 'node:readline';
@@ -58,7 +63,7 @@ if (process.argv[2] === '--udid') {
   assert.throws(() => process.kill(value(recovered).pid, 0), { code: 'ESRCH' });
 });
 
-test('a local native helper that exits before ready reports its exit status and stderr', async t => {
+test('a local native helper that exits before ready reports its exit status and stderr', { skip: socketHelper }, async t => {
   const f = await fixture(t, { beforeStart: async dir => {
     await writeFile(join(dir, 'build/poki-native'), `#!/usr/bin/env node
 console.error('earlier setup line');

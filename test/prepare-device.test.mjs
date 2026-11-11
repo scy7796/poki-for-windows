@@ -6,8 +6,11 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isWin } from '../src/os.mjs';
 
 const run = promisify(execFile);
+// The fake python3, idevice and xcodebuild are shell scripts, which Windows cannot run from PATH.
+const posixFakes = isWin && 'the fake device tools are POSIX shell scripts';
 const script = fileURLToPath(new URL('../bin/prepare-device.mjs', import.meta.url));
 const panic = (line, detail) => `thread 'main' panicked at tools/src/cryptexd.rs:${line}:18:\n${detail}\nnote: run with \`RUST_BACKTRACE=1\` environment variable to display a backtrace`;
 const failures = [
@@ -17,7 +20,7 @@ const failures = [
 ];
 
 for (const [name, output, explanation] of failures) {
-  test(`prepare-device explains ${name} instead of printing the installer panic`, async t => {
+  test(`prepare-device explains ${name} instead of printing the installer panic`, { skip: posixFakes }, async t => {
     const dir = await mkdtemp(join(tmpdir(), 'poki-prepare-'));
     t.after(() => rm(dir, { recursive: true, force: true }));
     const image = join(dir, 'Restore');
@@ -39,7 +42,7 @@ for (const [name, output, explanation] of failures) {
   });
 }
 
-test('prepare-device sends the user to Finder when usbmuxd answers with no device', async t => {
+test('prepare-device sends the user to Finder when usbmuxd answers with no device', { skip: posixFakes }, async t => {
   const dir = await mkdtemp(join(tmpdir(), 'poki-prepare-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   await mkdir(join(dir, 'bin'));

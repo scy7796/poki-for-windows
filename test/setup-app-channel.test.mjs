@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import nodeTest from 'node:test';
 import { channelOf } from '../src/install/setup-app.mjs';
+import { isWin } from '../src/os.mjs';
+
+// These cover upstream's standalone iPhone installer (src/install, bin/install-iphone.mjs, Poki Setup).
+// The Windows port does not ship it, so a Windows host skips them; elsewhere they run as upstream's.
+const standalone = isWin && "covers upstream's standalone iPhone installer, which this Windows port does not ship";
+const test = (name, ...rest) => nodeTest(name, { ...(typeof rest[0] === 'object' ? rest.shift() : {}), ...(standalone ? { skip: standalone } : {}) }, ...rest);
 
 test('app-* tags map to channels', () => {
   assert.equal(channelOf('app-0.2.9-prealpha.640', true), 'pre-alpha');

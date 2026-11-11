@@ -5,14 +5,19 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { root } from '../src/config.mjs';
+import { isWin } from '../src/os.mjs';
 
-test('remote setup persists a Bonjour host for future resolution and preserves IP setups', async t => {
+// The fake device tools are shebang scripts, which Windows cannot run from PATH.
+const posixFakes = isWin && 'the fake device tools are POSIX shebang scripts';
+
+test('remote setup persists a Bonjour host for future resolution and preserves IP setups', { skip: posixFakes }, async t => {
   const dir = await mkdtemp(join(tmpdir(), 'poki-remote-setup-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   await mkdir(join(dir, 'bin'));
   await mkdir(join(dir, 'src'));
   await cp(join(root, 'bin/prepare-remote.mjs'), join(dir, 'bin/prepare-remote.mjs'));
   await cp(join(root, 'src/config.mjs'), join(dir, 'src/config.mjs'));
+  await cp(join(root, 'src/os.mjs'), join(dir, 'src/os.mjs'));
   const log = join(dir, 'calls');
   const fake = `#!${process.execPath}
 import { appendFileSync, writeFileSync } from 'node:fs';

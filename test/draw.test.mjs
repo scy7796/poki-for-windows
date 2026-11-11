@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fixture, value } from './fixture.mjs';
+import { isWin } from '../src/os.mjs';
+
+const needsSimulator = isWin && 'needs the iOS Simulator, which only Xcode provides';
 
 const path = (...points) => points.map(([x, y, time_ms]) => ({ x, y, time_ms }));
 const messageOf = result => result.content.find(c => c.type === 'text').text;
@@ -45,7 +48,7 @@ test('touch_path and draw_strokes reach the phone as timed HID strokes and inval
   }
 });
 
-test('simulator strokes each touch down, follow their timing and lift in their own HID batch', async t => {
+test('simulator strokes each touch down, follow their timing and lift in their own HID batch', { skip: needsSimulator }, async t => {
   const f = await fixture(t);
   await f.set({ simulatorOnly: true, simulatorBooted: true });
   const before = (await f.events()).length;

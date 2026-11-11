@@ -24,8 +24,8 @@ import { execFileSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 const args=process.argv.slice(2), state=JSON.parse(readFileSync(process.env.FIXTURE_STATE));
 let tool=basename(process.argv[1]).replace(/\.(?:mjs|js)$/,'');
-// Windows reaches OCR through the interpreter, so the helper keeps the same identity here.
-if(tool==='python'&&String(args[0]??'').endsWith('ocr_win.py'))tool='ocr';
+// Windows (and Linux) reach OCR through the interpreter, so the helper keeps the same identity here.
+if((tool==='python'||tool==='python3')&&String(args[0]??'').endsWith('ocr_win.py'))tool='ocr';
 // The Windows build of the device tools carries the Cargo package name.
 if(tool==='idevice-tools')tool='idevice';
 const writeState=text=>{const temporary=process.env.FIXTURE_STATE+'.'+process.pid+'.tmp';writeFileSync(temporary,text);renameSync(temporary,process.env.FIXTURE_STATE);};

@@ -3,6 +3,11 @@ import assert from 'node:assert/strict';
 import sharp from 'sharp';
 import { Devices } from '../src/device.mjs';
 import { fixture } from './fixture.mjs';
+import { isWin } from '../src/os.mjs';
+
+const needsSimulator = isWin && 'needs the iOS Simulator, which only Xcode provides';
+// Launching on the simulator reads the app's Info.plist with plutil, which only macOS has.
+const needsMacSimulator = process.platform !== 'darwin' && 'needs the iOS Simulator and plutil, which only macOS with Xcode provides';
 
 // "Jot", an app invented for these tests: a home screen with its icon, a note with a title field and
 // a long list that scrolls. Drawn as blocks so a screenshot exists; no live screen, so do waits a fixed
@@ -171,7 +176,7 @@ test('the actions of one call stop at the action time cap', { timeout: 20000 }, 
   assert.ok(performance.now() - started < 7000);
 });
 
-test('on a simulator, do launches the app with simctl', { timeout: 30000 }, async t => {
+test('on a simulator, do launches the app with simctl', { timeout: 30000, skip: needsMacSimulator }, async t => {
   const f = await fixture(t);
   await f.set({ simulatorOnly: true, simulatorBooted: true, label: 'Ready' });
   await f.call('look', {});
@@ -181,7 +186,7 @@ test('on a simulator, do launches the app with simctl', { timeout: 30000 }, asyn
   assert.ok((await f.events()).some(e => e.tool === 'xcrun' && e.args.includes('launch') && e.args.includes('--terminate-running-process') && e.args.includes('local.fixture')), 'simctl launched it, ending the running app first');
 });
 
-test('on a simulator, do types with the simulator keyboard', { timeout: 30000 }, async t => {
+test('on a simulator, do types with the simulator keyboard', { timeout: 30000, skip: needsSimulator }, async t => {
   const f = await fixture(t);
   await f.set({ simulatorOnly: true, simulatorBooted: true, keyboard: 'en_US', label: 'Ready', field: 'old', typed: 'hello' });
   const looked = await f.call('look', {});

@@ -129,8 +129,10 @@ test('cancel interrupts the human dialog process and never executes the approved
 test('list_devices sends the user to Finder when usbmuxd answers with no device',async t=>{
  const f=await fixture(t);await f.set({simulatorOnly:true,simulatorBooted:true});
  const listed=value(await f.call('list_devices'));
- assert.deepEqual(listed.devices.map(d=>d.id),['fixture-sim']);
- assert.match(listed.notice,/Finder sidebar/);assert.match(listed.notice,/devicectl reaches only over the network/);
+ // Windows has no simulator to list, and its first check is the Apple Devices app rather than Finder.
+ assert.deepEqual(listed.devices.map(d=>d.id),isWin?[]:['fixture-sim']);
+ if(isWin)assert.match(listed.notice,/Apple Devices app/);
+ else {assert.match(listed.notice,/Finder sidebar/);assert.match(listed.notice,/devicectl reaches only over the network/);}
  await f.set({simulatorOnly:false});
  assert.equal(value(await f.call('list_devices')).notice,undefined);
 });
@@ -223,6 +225,13 @@ test('an English query taps a mixed Chinese and English label',async t=>{
  assert.notEqual(result.isError,true,JSON.stringify(result));
  assert.ok((await f.events()).some(event=>event.op==='tap'),'the matching target must receive the tap');
  assert.match(JSON.stringify(result),/Signed in/);
+});
+
+test('a Chinese query matches a label Windows OCR spaced inside its number and brackets',async t=>{
+ const f=await fixture(t);await f.set({label:'微信 ( 714 )',afterInput:{label:'Chats'}});
+ const result=await f.call('tap_text',{text:'微信(714)'});
+ assert.notEqual(result.isError,true,JSON.stringify(result));
+ assert.ok((await f.events()).some(event=>event.op==='tap'),'the matching target must receive the tap');
 });
 
 test('a failed text search keeps the foreground accessibility reported when OCR has no answer',async t=>{

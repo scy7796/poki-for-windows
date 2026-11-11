@@ -1,4 +1,4 @@
-import test from 'node:test';
+import nodeTest from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -6,6 +6,12 @@ import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/pr
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { root } from '../src/config.mjs';
+import { isWin } from '../src/os.mjs';
+
+// These cover upstream's standalone iPhone installer (src/install, bin/install-iphone.mjs, Poki Setup).
+// The Windows port does not ship it, so a Windows host skips them; elsewhere they run as upstream's.
+const standalone = isWin && "covers upstream's standalone iPhone installer, which this Windows port does not ship";
+const test = (name, ...rest) => nodeTest(name, { ...(typeof rest[0] === 'object' ? rest.shift() : {}), ...(standalone ? { skip: standalone } : {}) }, ...rest);
 
 const exec = promisify(execFile);
 const cli = join(root, 'bin/install-iphone.mjs');

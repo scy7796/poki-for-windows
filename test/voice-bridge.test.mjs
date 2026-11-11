@@ -1,4 +1,4 @@
-import test from 'node:test';
+import nodeTest from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -7,6 +7,12 @@ import { copyFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fixture } from './fixture.mjs';
 import { root } from '../src/config.mjs';
+import { isWin } from '../src/os.mjs';
+
+// These cover upstream's voice bridge for the Poki iPhone app (bin/voice-bridge.mjs).
+// The Windows port does not ship it, so a Windows host skips them; elsewhere they run as upstream's.
+const standalone = isWin && "covers upstream's voice bridge for the Poki iPhone app, which this Windows port does not ship";
+const test = (name, ...rest) => nodeTest(name, { ...(typeof rest[0] === 'object' ? rest.shift() : {}), ...(standalone ? { skip: standalone } : {}) }, ...rest);
 
 // The voice bridge in front of a fixture daemon and phone, as the Poki app reaches it.
 async function bridge(t, f) {

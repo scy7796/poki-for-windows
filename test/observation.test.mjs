@@ -4,6 +4,10 @@ import { rm, writeFile } from 'node:fs/promises';
 import { Devices } from '../src/device.mjs';
 import { join } from 'node:path';
 import { fixture, value } from './fixture.mjs';
+import { isWin } from '../src/os.mjs';
+
+// open_url reaches the phone only through Xcode's process service, so Windows does not offer it.
+const openUrlNeedsXcode = isWin && 'open_url is not offered without Xcode';
 
 // A phone over a network tunnel takes seconds per accessibility read; the fixture's delay stands in for it.
 test('a tap on a phone with slow accessibility reads still ends with the screen', { timeout: 30000 }, async t => {
@@ -55,7 +59,7 @@ const summary=JSON.parse(result.content.at(-1).text);
  assert.ok(elapsed<20000,`batch took ${Math.round(elapsed)} ms`);
 });
 
-test('a gated tool says who approved it, and the status names the tools approval covers', { timeout: 30000 }, async t => {
+test('a gated tool says who approved it, and the status names the tools approval covers', { timeout: 30000, skip: openUrlNeedsXcode }, async t => {
  const f=await fixture(t,{approvalMode:'allow'});await f.set({simulatorOnly:true,simulatorBooted:true});
  const status=value(await f.call('poki_mcp_status'));
  assert.equal(status.approval_mode,'operator-preapproved');
