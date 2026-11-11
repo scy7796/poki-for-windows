@@ -198,7 +198,9 @@ export class Devices {
       if (!device.id || (physical.has(device.id) && device.connection !== 'USB')) continue;
       physical.set(device.id, { ...device, kind: 'physical', name: this.physicalNames.get(device.id) ?? device.id });
     }
-    for (const remote of await remoteDevices()) physical.set(remote.id, remote);
+    // A phone on the cable is reached over the cable, even when it also has a saved wireless pairing:
+    // that pairing needs the phone on Wi-Fi, and the cable does not.
+    for (const remote of await remoteDevices()) if (physical.get(remote.id)?.connection !== 'USB') physical.set(remote.id, remote);
     const simulators = await inventorySimulators().catch(() => []);
     return [...physical.values(), ...simulators.filter(d => all || d.state === 'Booted' || usedSimulators.has(d.id))];
   }
